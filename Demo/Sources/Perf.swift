@@ -9,6 +9,8 @@ final class Perf: ObservableObject {
     static let shared = Perf()
 
     var frames = 0, hitches = 0, hitchMs = 0.0, worstMs = 0.0, busyMs = 0.0
+    /// Main-thread stretches between run-loop waits: the longest, and how many overran a 120 Hz and a 60 Hz frame.
+    var longestBusyMs = 0.0, busyOver8 = 0, busyOver16 = 0
     private var last: CFTimeInterval = 0
     private var link: CADisplayLink?
     private var wokeAt: CFAbsoluteTime = 0
@@ -18,13 +20,15 @@ final class Perf: ObservableObject {
     func start() {
         guard link == nil else { return }
         let link = CADisplayLink(target: Target { [weak self] link in self?.tick(link) }, selector: #selector(Target.tick(_:)))
+        // Asks for the display's top rate, which an iPhone grants above 60 Hz only with CADisableMinimumFrameDurationOnPhone.
+        link.preferredFrameRateRange = CAFrameRateRange(minimum: 60, maximum: 120, preferred: 120)
         link.add(to: .main, forMode: .common)
         self.link = link
         let observer = CFRunLoopObserverCreateWithHandler(nil, CFRunLoopActivity.afterWaiting.rawValue | CFRunLoopActivity.beforeWaiting.rawValue, true, 0) { [weak self] _, activity in
             MainActor.assumeIsolated {
                 guard let self else { return }
                 let now = CFAbsoluteTimeGetCurrent()
-                if activity == .afterWaiting { self.wokeAt = now } else if self.wokeAt > 0 { self.busyMs += (now - self.wokeAt) * 1000; self.wokeAt = 0 }
+                if activity == .afterWaiting { self.wokeAt = now } else if self.wokeAt > 0 { self.busy((now - self.wokeAt) * 1000); self.wokeAt = 0 }
             }
         }
         CFRunLoopAddObserver(CFRunLoopGetMain(), observer, .commonModes)
@@ -39,10 +43,17 @@ final class Perf: ObservableObject {
         if gap > max(expected, 8.3) * 1.5 { hitches += 1; hitchMs += gap - max(expected, 8.3) }
     }
 
-    func reset() { frames = 0; hitches = 0; hitchMs = 0; worstMs = 0; busyMs = 0 }
+    private func busy(_ ms: Double) {
+        busyMs += ms
+        longestBusyMs = max(longestBusyMs, ms)
+        if ms > 8.3 { busyOver8 += 1 }
+        if ms > 16.7 { busyOver16 += 1 }
+    }
+
+    func reset() { frames = 0; hitches = 0; hitchMs = 0; worstMs = 0; busyMs = 0; longestBusyMs = 0; busyOver8 = 0; busyOver16 = 0 }
 
     func line(_ label: String, seconds: Double) -> String {
-        String(format: "%@ frames=%d fps=%.0f hitches=%d hitchMsPerS=%.0f worstMs=%.0f busyMsPerS=%.0f", label, frames, Double(frames) / seconds, hitches, hitchMs / seconds, worstMs, busyMs / seconds)
+        String(format: "%@ frames=%d fps=%.0f hitches=%d hitchMsPerS=%.0f worstMs=%.0f busyMsPerS=%.0f longestBusyMs=%.1f busyOver8ms=%d busyOver16ms=%d", label, frames, Double(frames) / seconds, hitches, hitchMs / seconds, worstMs, busyMs / seconds, longestBusyMs, busyOver8, busyOver16)
     }
 
     static func footprintMB() -> Double {

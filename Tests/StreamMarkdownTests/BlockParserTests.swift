@@ -69,12 +69,11 @@ struct BlockParserTests {
     @Test func aReferenceDefinitionIsContextForTheBlockThatUsesIt() {
         let use = "See [the paper][lora] and [this](https://example.com)."
         let unresolved = BlockParser.parse(use + "\n\nMore.")
-        #expect(unresolved[0].references == "")
+        #expect(!unresolved[0].key.inputs.contains("arxiv.org"))
 
         let resolved = BlockParser.parse(use + "\n\nMore.\n\n[lora]: https://arxiv.org/abs/2106.09685 \"LoRA\"")
         #expect(resolved.count == 2, "a definition draws nothing")
-        #expect(resolved[0].references.contains("https://arxiv.org/abs/2106.09685"))
-        #expect(resolved[0].references.contains("LoRA"))
+        #expect(resolved[0].key.inputs.contains("https://arxiv.org/abs/2106.09685"))
         #expect(resolved[0].key != unresolved[0].key)
         #expect(resolved[1].key == unresolved[1].key)
     }
@@ -82,7 +81,17 @@ struct BlockParserTests {
     @Test func aDefinitionBeforeItsUseResolvesToo() {
         let blocks = BlockParser.parse("[d]: https://duoxiv.app\n\nRead [Duoxiv][d].")
         #expect(blocks.count == 1)
-        #expect(blocks[0].references.contains("https://duoxiv.app"))
+        #expect(blocks[0].key.inputs.contains("https://duoxiv.app"))
+    }
+
+    /// The key holds what the block draws, so whitespace that changes it changes the key and whitespace that does not, does not.
+    @Test func keysFollowWhatTheBlockDraws() {
+        func key(_ text: String) -> BlockKey { BlockParser.parse(text)[0].key }
+        #expect(key("- [ ]") != key("- [ ] \n\nDone."), "a task box needs the space after it")
+        #expect(key("```\na") != key("```\na\n\n"), "an open fence keeps its blank lines")
+        #expect(key("- a") == key("- a\n\n"))
+        #expect(key("Text") == key("Text  "))
+        #expect(BlockParser.parse("- a\n\nNext")[0].source == "- a")
     }
 
     @Test func emptyTextHasNoBlocks() {

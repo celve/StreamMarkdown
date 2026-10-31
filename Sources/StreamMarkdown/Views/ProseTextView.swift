@@ -24,6 +24,7 @@ struct ProseTextView: UIViewRepresentable {
         view.delegate = context.coordinator
         context.coordinator.baseTraits = view.accessibilityTraits
         StreamMarkdownDiagnostics.textViews += 1
+        StreamMarkdownDiagnostics.liveTextViews.add(view)
         return view
     }
 
@@ -39,7 +40,9 @@ struct ProseTextView: UIViewRepresentable {
         guard coordinator.shown !== text else { return }
         coordinator.shown = text
         coordinator.sizes.removeAll()
+        let began = ContinuousClock.now
         view.attributedText = text.string
+        StreamMarkdownDiagnostics.textUpdateMs += (ContinuousClock.now - began).milliseconds
         view.accessibilityTraits = text.headingLevel == nil ? coordinator.baseTraits : coordinator.baseTraits.union(.header)
         StreamMarkdownDiagnostics.textViewUpdates += 1
     }
@@ -47,7 +50,9 @@ struct ProseTextView: UIViewRepresentable {
     func sizeThatFits(_ proposal: ProposedViewSize, uiView: UITextView, context: Context) -> CGSize? {
         let width = proposal.width ?? .greatestFiniteMagnitude
         if let size = context.coordinator.sizes[width] { return size }
+        let began = ContinuousClock.now
         let fitted = uiView.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude))
+        StreamMarkdownDiagnostics.sizingMs += (ContinuousClock.now - began).milliseconds
         let size = CGSize(width: proposal.width ?? fitted.width.rounded(.up), height: fitted.height.rounded(.up))
         context.coordinator.sizes[width] = size
         return size
@@ -71,6 +76,12 @@ struct ProseTextView: UIViewRepresentable {
             if textView.selectedRange.length > 0 { selection?.claim(textView) }
         }
     }
+}
+
+@_spi(Diagnostics) extension StreamMarkdownDiagnostics {
+    /// Text views holding a selection now, even one UIKit no longer draws.
+    public static var selectedTextViews: Int { liveTextViews.allObjects.count { $0.selectedRange.length > 0 } }
+    static let liveTextViews = NSHashTable<UITextView>.weakObjects()
 }
 
 /// Keeps a selection in at most one block of an answer: selecting in one clears the last.

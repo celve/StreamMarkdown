@@ -27,6 +27,8 @@ targets:
       INFOPLIST_KEY_UILaunchScreen_Generation: YES
       INFOPLIST_KEY_UISupportedInterfaceOrientations: UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight
       INFOPLIST_KEY_CFBundleDisplayName: StreamMarkdown
+      # Holds CADisableMinimumFrameDurationOnPhone, which lets a ProMotion iPhone run the app's own display links at 120 Hz.
+      INFOPLIST_FILE: Info.plist
       PRODUCT_BUNDLE_IDENTIFIER: $(DEMO_BUNDLE_ID)
   StreamMarkdownDemoUITests:
     type: bundle.ui-testing

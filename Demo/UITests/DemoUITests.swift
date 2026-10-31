@@ -41,13 +41,19 @@ final class DemoUITests: XCTestCase {
     }
 
     func testOneBlockHoldsTheSelection() {
+        app.terminate()
+        app.launchArguments = ["-answer", "showcase", "-rate", "0", "-hud", "1"]
+        app.launch()
+        let meter = app.staticTexts["meter"]
+        XCTAssertTrue(meter.waitForExistence(timeout: 20))
         let paragraphs = app.textViews.allElementsBoundByIndex.filter { ($0.value as? String)?.hasPrefix("This answer") == true || ($0.value as? String)?.hasPrefix("A soft break") == true }
         XCTAssertEqual(paragraphs.count, 2)
         paragraphs[0].coordinate(withNormalizedOffset: CGVector(dx: 0.1, dy: 0.1)).doubleTap()
-        sleep(1)
+        XCTAssertTrue(meter.waitFor(label: "· 1 selected"), meter.label)
         shoot("selection-first")
         paragraphs[1].coordinate(withNormalizedOffset: CGVector(dx: 0.1, dy: 0.3)).doubleTap()
-        sleep(1)
+        sleep(2)
+        XCTAssertTrue(meter.waitFor(label: "· 1 selected"), "the first block still holds its selection: \(meter.label)")
         shoot("selection-second")
     }
 
@@ -70,5 +76,17 @@ final class DemoUITests: XCTestCase {
             let suffix = ProcessInfo.processInfo.environment["SHOTS_SUFFIX"] ?? ""
             try? shot.pngRepresentation.write(to: URL(fileURLWithPath: dir).appendingPathComponent("\(name)\(suffix).png"))
         }
+    }
+}
+
+private extension XCUIElement {
+    /// The meter reads its counters once a second, so wait for the next readings.
+    func waitFor(label suffix: String) -> Bool {
+        let deadline = Date().addingTimeInterval(4)
+        while Date() < deadline {
+            if label.hasSuffix(suffix) { return true }
+            usleep(200_000)
+        }
+        return label.hasSuffix(suffix)
     }
 }

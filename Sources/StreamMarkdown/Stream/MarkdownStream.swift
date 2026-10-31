@@ -118,13 +118,16 @@ final class MarkdownStream {
         }
         let (text, style, previous, revision, compile) = (text, style, reusableBlocks, nextRevision, compile)
         job = Task.detached(priority: .userInitiated) { [weak self] in
+            let began = ContinuousClock.now
             let compilation = compile(text, style, previous, revision)
-            await self?.finish(compilation, style: style)
+            let took = ContinuousClock.now - began
+            await self?.finish(compilation, style: style, took: took)
         }
     }
 
-    private func finish(_ compilation: Compilation, style: ResolvedStyle) {
+    private func finish(_ compilation: Compilation, style: ResolvedStyle, took: Duration) {
         job = nil
+        StreamMarkdownDiagnostics.compileMs += took.milliseconds
         apply(compilation, style: style)
         if isStale {
             isStale = false
@@ -137,6 +140,8 @@ final class MarkdownStream {
     }
 
     private func apply(_ compilation: Compilation, style: ResolvedStyle) {
+        let began = ContinuousClock.now
+        defer { StreamMarkdownDiagnostics.publishMs += (ContinuousClock.now - began).milliseconds }
         nextRevision = compilation.nextRevision
         builtCount += compilation.built
         StreamMarkdownDiagnostics.parses += 1
@@ -156,11 +161,22 @@ public enum StreamMarkdownDiagnostics {
     /// Times a block's text view was given a new attributed string, its first included.
     public static var textViewUpdates = 0
     public static var textViews = 0
+    /// Time spent in background parse jobs (parse and build), and on the main thread publishing their blocks, setting
+    /// text views' strings, and laying text out to size a view.
+    public static var compileMs = 0.0, publishMs = 0.0, textUpdateMs = 0.0, sizingMs = 0.0
 
     public static func reset() {
         parses = 0
         builtBlocks = 0
         textViewUpdates = 0
         textViews = 0
+        compileMs = 0
+        publishMs = 0
+        textUpdateMs = 0
+        sizingMs = 0
     }
+}
+
+extension Duration {
+    var milliseconds: Double { Double(components.seconds) * 1000 + Double(components.attoseconds) / 1e15 }
 }

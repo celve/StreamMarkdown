@@ -37,18 +37,15 @@ struct ParsedBlock {
     /// UTF-8 offsets into the answer, from the start of the block's first line.
     let range: Range<Int>
     let source: String
-    /// Link and image targets that came from a reference definition elsewhere in the answer; empty when it has none.
-    let references: String
     let markup: Markup
 
-    var key: BlockKey { BlockKey(kind: kind, source: source, references: references) }
+    var key: BlockKey { BlockKey(kind: kind, inputs: BlockRenderer.inputs(markup, kind: kind, source: source)) }
 }
 
-/// Everything a block's rendering depends on besides the style: two blocks with equal keys render alike.
+/// Everything a block's rendering reads besides the style: two blocks with equal keys render alike.
 struct BlockKey: Hashable, Sendable {
     let kind: BlockKind
-    let source: String
-    let references: String
+    let inputs: String
 }
 
 enum BlockParser {
@@ -57,8 +54,6 @@ enum BlockParser {
         let document = Document(parsing: text, options: [.disableSmartOpts])
         let lines = LineStarts(text)
         let bytes = Array(text.utf8)
-        // A reference definition needs `]:`; without one, a block's links follow from its own source alone.
-        let hasDefinitions = text.contains("]:")
         var blocks: [ParsedBlock] = []
         var previousEnd = 0
         for markup in document.children {
@@ -67,7 +62,7 @@ enum BlockParser {
                 let start = max(lines.lineStart(of: sourceRange.lowerBound.line), previousEnd)
                 // cmark ends a list or rule after its line break when a blank line follows, but not at the end of the text.
                 var end = max(start, lines.offset(of: sourceRange.upperBound))
-                while end > start, [UInt8(ascii: "\n"), UInt8(ascii: "\r"), UInt8(ascii: " "), UInt8(ascii: "\t")].contains(bytes[end - 1]) { end -= 1 }
+                while end > start, bytes[end - 1] == UInt8(ascii: "\n") || bytes[end - 1] == UInt8(ascii: "\r") { end -= 1 }
                 range = start..<end
             } else {
                 range = previousEnd..<previousEnd
@@ -75,37 +70,9 @@ enum BlockParser {
             previousEnd = range.upperBound
             let utf8 = text.utf8
             let source = String(text[utf8.index(utf8.startIndex, offsetBy: range.lowerBound)..<utf8.index(utf8.startIndex, offsetBy: range.upperBound)])
-            blocks.append(ParsedBlock(
-                index: blocks.count,
-                kind: BlockKind(markup),
-                range: range,
-                source: source,
-                references: hasDefinitions && source.contains("[") ? Self.targets(in: markup) : "",
-                markup: markup
-            ))
+            blocks.append(ParsedBlock(index: blocks.count, kind: BlockKind(markup), range: range, source: source, markup: markup))
         }
         return blocks
-    }
-
-    /// The destinations and titles of the links and images under `markup`, which change when a definition resolves one.
-    private static func targets(in markup: Markup) -> String {
-        var collector = TargetCollector()
-        collector.visit(markup)
-        return collector.targets
-    }
-}
-
-private struct TargetCollector: MarkupWalker {
-    var targets = ""
-
-    mutating func visitLink(_ link: Link) {
-        targets += (link.destination ?? "") + "\u{1F}" + (link.title ?? "") + "\u{1E}"
-        descendInto(link)
-    }
-
-    mutating func visitImage(_ image: Image) {
-        targets += (image.source ?? "") + "\u{1F}" + (image.title ?? "") + "\u{1E}"
-        descendInto(image)
     }
 }
 

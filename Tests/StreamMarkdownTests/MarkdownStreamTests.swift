@@ -77,6 +77,42 @@ struct MarkdownStreamTests {
         #expect(try text(after[0]).attribute(.link, at: 4, effectiveRange: nil) as? URL == URL(string: "https://arxiv.org/abs/2106.09685"))
     }
 
+    /// Streamed in these steps, an answer renders exactly as the last step does parsed fresh.
+    @Test(arguments: [
+        ["- [ ]", "- [ ] \n\nDone."],
+        ["> - [ ]", "> - [ ] \n\nDone."],
+        ["```\na", "```\na\n\n"],
+        ["```\na", "```\na\n\n", "```\na\n\nb"],
+        ["Ends here", "Ends here  ", "Ends here  \nand goes on"],
+        ["<div>", "<div>  \n\nText"],
+        ["| a |\n|---|\n| 1 |", "| a |\n|---|\n| 1 |  \n\nText"],
+    ])
+    func chunksRenderAsTheWholeTextDoes(_ steps: [String]) async throws {
+        let stream = MarkdownStream()
+        for step in steps {
+            stream.update(text: step)
+            await stream.settled()
+        }
+        let fresh = MarkdownStream()
+        fresh.update(text: steps.last!)
+        await fresh.settled()
+        #expect(stream.blocks.map(\.kind) == fresh.blocks.map(\.kind))
+        for (streamed, whole) in zip(stream.blocks, fresh.blocks) {
+            #expect(Rendered(streamed.content) == Rendered(whole.content), "block \(streamed.id) after \(steps)")
+        }
+    }
+
+    @Test func anUnrelatedDefinitionLeavesInlineLinksAlone() async {
+        let stream = MarkdownStream()
+        let body = "[inline](https://example.com)\n\nUnrelated text."
+        stream.update(text: body)
+        await stream.settled()
+        let before = stream.blocks
+        stream.update(text: body + "\n\n[unused]: https://unused.example")
+        await stream.settled()
+        #expect(stream.blocks.map(\.revision) == before.map(\.revision))
+    }
+
     @Test func aNewEnvironmentRebuildsEveryBlock() async throws {
         let stream = MarkdownStream()
         stream.update(text: Samples.answer)
@@ -118,6 +154,20 @@ struct MarkdownStreamTests {
     }
 
     private enum Failure: Error { case notText }
+}
+
+/// What a block draws, compared by value.
+private enum Rendered: Equatable {
+    case text(NSAttributedString), quote([Rendered]), rule, source(NSAttributedString)
+
+    init(_ content: BlockContent) {
+        switch content {
+        case .text(let text): self = .text(text.string)
+        case .quote(let blocks): self = .quote(blocks.map { Rendered($0.content) })
+        case .rule: self = .rule
+        case .source(let text): self = .source(text.string)
+        }
+    }
 }
 
 /// Wraps the real compile, recording the thread, the texts parsed and how many ran at once.

@@ -104,15 +104,17 @@ struct Meter: View {
             .frame(maxWidth: .infinity)
             .padding(.vertical, 4)
             .background(.bar)
+            .accessibilityIdentifier("meter")
             .task {
                 let perf = Perf.shared
                 perf.start()
                 while !Task.isCancelled {
                     perf.reset()
                     try? await Task.sleep(for: .seconds(1))
-                    reading = String(format: "%d fps · %.0f ms/s main · %d parses · %d built · %d text updates · %d views",
+                    reading = String(format: "%d fps · %.0f ms/s main · %d parses · %d built · %d text updates · %d views · %d selected",
                                      perf.frames, perf.busyMs, StreamMarkdownDiagnostics.parses, StreamMarkdownDiagnostics.builtBlocks,
-                                     StreamMarkdownDiagnostics.textViewUpdates, StreamMarkdownDiagnostics.textViews)
+                                     StreamMarkdownDiagnostics.textViewUpdates, StreamMarkdownDiagnostics.textViews,
+                                     StreamMarkdownDiagnostics.selectedTextViews)
                 }
             }
     }

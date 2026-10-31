@@ -44,13 +44,59 @@ enum BlockRenderer {
             })
         case .thematicBreak:
             return .rule
-        case .codeBlock:
-            return .source(ProseBuilder.source(((markup as? CodeBlock)?.code ?? "").trimmingFinalNewline, style: style))
-        case .table, .html, .other:
-            let text = source ?? (markup as? HTMLBlock)?.rawHTML ?? markup.format()
-            return .source(ProseBuilder.source(text.trimmingCharacters(in: .newlines), style: style))
+        case .codeBlock, .table, .html, .other:
+            return .source(ProseBuilder.source(sourceText(markup, kind: kind, source: source), style: style))
         }
     }
+
+    /// Everything `render` reads from a block besides the style: its source text where it draws that, else its tree.
+    static func inputs(_ markup: Markup, kind: BlockKind, source: String?) -> String {
+        switch kind {
+        case .table, .html, .other:
+            return sourceText(markup, kind: kind, source: source)
+        default:
+            var inputs = RenderInputs()
+            inputs.visit(markup)
+            return inputs.written
+        }
+    }
+
+    private static func sourceText(_ markup: Markup, kind: BlockKind, source: String?) -> String {
+        if case .codeBlock = kind { return ((markup as? CodeBlock)?.code ?? "").trimmingFinalNewline }
+        return (source ?? (markup as? HTMLBlock)?.rawHTML ?? markup.format()).trimmingCharacters(in: .newlines)
+    }
+}
+
+/// A tree written out with every field `ProseBuilder` and `BlockRenderer` read, each value length-prefixed, so trees that
+/// would render differently never write the same string. A field a renderer starts reading belongs here too.
+struct RenderInputs: MarkupWalker {
+    private(set) var written = ""
+
+    mutating func defaultVisit(_ markup: Markup) {
+        node(markup)
+    }
+
+    mutating func visitText(_ text: Text) { node(text, text.string) }
+    mutating func visitInlineCode(_ code: InlineCode) { node(code, code.code) }
+    mutating func visitInlineHTML(_ html: InlineHTML) { node(html, html.rawHTML) }
+    mutating func visitHTMLBlock(_ html: HTMLBlock) { node(html, html.rawHTML) }
+    mutating func visitCodeBlock(_ code: CodeBlock) { node(code, code.language ?? "\u{0}", code.code) }
+    mutating func visitTable(_ table: Table) { written += "Table(\(Self.value(table.format())))" }
+    mutating func visitLink(_ link: Link) { node(link, link.destination ?? "\u{0}") }
+    mutating func visitImage(_ image: Image) { node(image, image.source ?? "\u{0}") }
+    mutating func visitSymbolLink(_ link: SymbolLink) { node(link, link.destination ?? "\u{0}") }
+    mutating func visitHeading(_ heading: Heading) { node(heading, "\(heading.level)") }
+    mutating func visitOrderedList(_ list: OrderedList) { node(list, "\(list.startIndex)") }
+    mutating func visitListItem(_ item: ListItem) { node(item, item.checkbox.map { $0 == .checked ? "x" : " " } ?? "") }
+
+    private mutating func node(_ markup: Markup, _ values: String...) {
+        written += "\(type(of: markup))("
+        for value in values { written += Self.value(value) }
+        descendInto(markup)
+        written += ")"
+    }
+
+    private static func value(_ value: String) -> String { "\(value.utf8.count):\(value)" }
 }
 
 extension String {
