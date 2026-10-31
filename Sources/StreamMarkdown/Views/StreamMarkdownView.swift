@@ -2,15 +2,19 @@
 import SwiftUI
 
 /// A Markdown answer that may still be arriving, one view per root block. Pass the whole answer so far each time it
-/// grows: it is parsed off the main thread, and only a block whose source changed is drawn again. Links go to the
-/// environment's `openURL`; `streamMarkdownStyle(_:)` sets the look.
+/// grows: it is parsed off the main thread, and only a block whose source changed is drawn again. While it streams,
+/// new text is released at a steady pace and fades in, unfinished syntax at its end is hidden or closed, and new blocks
+/// fade in; under Reduce Motion text shows as it arrives. Links go to the environment's `openURL`;
+/// `streamMarkdownStyle(_:)` sets the look.
 public struct StreamMarkdownView: View {
     private let text: String
     private let isStreaming: Bool
     @State private var stream = MarkdownStream()
+    @State private var clock = DisplayLinkClock()
     @State private var selection = SelectionOwner()
     @Environment(\.streamMarkdownStyle) private var style
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     /// - Parameters:
     ///   - text: the answer so far.
@@ -22,31 +26,54 @@ public struct StreamMarkdownView: View {
 
     public var body: some View {
         let environment = RenderEnvironment(style: style, dynamicTypeSize: dynamicTypeSize)
-        BlockStack(blocks: stream.blocks, em: stream.style.em)
+        BlockStack(stream: stream)
             .environment(\.streamMarkdownSelection, selection)
-            .onAppear { stream.start(text: text, environment: environment, isStreaming: isStreaming) }
-            .onChange(of: text) { stream.update(text: text) }
+            .environment(\.streamMarkdownStream, stream)
+            .onAppear {
+                clock.stream = stream
+                stream.start(text: text, environment: environment, isStreaming: isStreaming, reduceMotion: reduceMotion, clock: clock)
+            }
+            .onChange(of: text) { stream.receive(text) }
             .onChange(of: isStreaming) { stream.update(isStreaming: isStreaming) }
+            .onChange(of: reduceMotion) { stream.update(reduceMotion: reduceMotion) }
             .onChange(of: environment) { stream.update(environment: environment) }
     }
 }
 
-/// The root blocks top to bottom, spaced by kind.
+/// The root blocks top to bottom, spaced by kind. It redraws only when a block is added or removed; each slot redraws
+/// on its own when its block was built anew.
 struct BlockStack: View {
-    let blocks: [MarkdownBlock]
-    let em: CGFloat
-    @Environment(\.streamMarkdownStyle) private var style
+    let stream: MarkdownStream
 
     var body: some View {
+        let slots = stream.slots
         VStack(alignment: .leading, spacing: 0) {
-            ForEach(blocks) { block in
-                BlockView(kind: block.kind, revision: block.revision, content: block.content)
-                    .equatable()
-                    .padding(.top, block.id == 0 ? 0 : style.spacing(between: blocks[block.id - 1].kind, and: block.kind) * em)
+            ForEach(slots) { slot in
+                SlotView(slot: slot, previous: slot.id > 0 ? slots[slot.id - 1] : nil)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .environment(\.streamMarkdownEm, em)
+        .environment(\.streamMarkdownEm, stream.em)
+    }
+}
+
+struct SlotView: View {
+    let slot: BlockSlot
+    let previous: BlockSlot?
+    @Environment(\.streamMarkdownStyle) private var style
+    @Environment(\.streamMarkdownEm) private var em
+
+    var body: some View {
+        let block = BlockView(kind: slot.kind, revision: slot.revision, content: slot.content)
+            .equatable()
+            .padding(.top, previous.map { style.spacing(between: $0.kind, and: slot.kind) * em } ?? 0)
+            .environment(\.streamMarkdownFadesIn, slot.fadesIn)
+        // Text fades in word by word instead.
+        if slot.fadesIn, !slot.content.isText {
+            block.modifier(FadeIn())
+        } else {
+            block
+        }
     }
 }
 
@@ -65,10 +92,30 @@ struct BlockView: View, Equatable {
     }
 }
 
+/// Fades a view in over 150 ms when it appears.
+struct FadeIn: ViewModifier {
+    var enabled = true
+    @State private var shown = false
+
+    func body(content: Content) -> some View {
+        content
+            .opacity(enabled && !shown ? 0 : 1)
+            .onAppear {
+                guard enabled else { return }
+                withAnimation(.easeOut(duration: 0.15)) { shown = true }
+            }
+    }
+}
+
 struct BlockContentView: View {
     let content: BlockContent
     @Environment(\.streamMarkdownStyle) private var style
     @Environment(\.streamMarkdownEm) private var em
+    @Environment(\.streamMarkdownFadesIn) private var fadesIn
+    @Environment(\.streamMarkdownStream) private var stream
+
+    /// A code block, table or formula that arrives inside a block already shown fades in on its own.
+    private var fadesNewPieces: Bool { fadesIn && stream?.animates == true }
 
     var body: some View {
         switch content {
@@ -78,6 +125,7 @@ struct BlockContentView: View {
             VStack(alignment: .leading, spacing: 0) {
                 ForEach(blocks) { block in
                     BlockContentView(content: block.content)
+                        .modifier(FadeIn(enabled: fadesNewPieces && !block.content.isText))
                         .padding(.top, block.id == 0 ? 0 : style.spacing(between: blocks[block.id - 1].kind, and: block.kind) * em)
                 }
             }
@@ -100,6 +148,7 @@ struct BlockContentView: View {
             VStack(alignment: .leading, spacing: 0) {
                 ForEach(items) { item in
                     BlockContentView(content: item.content)
+                        .modifier(FadeIn(enabled: fadesNewPieces && !item.content.isText))
                         .padding(.top, item.gap)
                         .padding(.leading, item.indent)
                 }
@@ -123,7 +172,7 @@ struct SourceView: View {
     @Environment(\.streamMarkdownEm) private var em
 
     var body: some View {
-        ProseTextView(text: text)
+        ProseTextView(text: text, fades: false)
             .padding(em * 0.75)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(style.sourceBackground, in: .rect(cornerRadius: em * 0.6))
@@ -156,5 +205,15 @@ struct DisplayMathView: View {
 extension EnvironmentValues {
     @Entry var streamMarkdownEm: CGFloat = 17
     @Entry var streamMarkdownSelection: SelectionOwner?
+    /// The answer's stream, which text views ask whether new text fades in.
+    @Entry var streamMarkdownStream: MarkdownStream?
+    /// The block arrived while the answer streamed, so its first text fades in too.
+    @Entry var streamMarkdownFadesIn = false
+}
+
+extension BlockContent {
+    var isText: Bool {
+        if case .text = self { true } else { false }
+    }
 }
 #endif

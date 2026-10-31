@@ -33,7 +33,7 @@ struct CodeBlockView: View {
             .padding(.horizontal, em * 0.75)
             .padding(.top, em * 0.15)
             ScrollView(.horizontal) {
-                ProseTextView(text: code.text)
+                ProseTextView(text: code.text, fades: false)
                     .padding(.horizontal, em * 0.75)
                     .padding(.bottom, em * 0.75)
             }
