@@ -3,20 +3,24 @@ import SwiftUI
 import UIKit
 
 /// A block's text in a non-scrolling TextKit 2 text view: selectable, sized to its width, links through `openURL`.
+/// While the answer streams, new characters fade in, unless `fades` is off.
 struct ProseTextView: UIViewRepresentable {
     let text: RichText
+    var fades = true
     @Environment(\.streamMarkdownStyle) private var style
     @Environment(\.streamMarkdownSelection) private var selection
+    @Environment(\.streamMarkdownStream) private var stream
+    @Environment(\.streamMarkdownFadesFirstText) private var fadesFirstText
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
-    func makeUIView(context: Context) -> UITextView {
+    func makeUIView(context: Context) -> ProseUITextView {
         let view = UITextView.answerText(delegate: context.coordinator)
         context.coordinator.baseTraits = view.accessibilityTraits
         return view
     }
 
-    func updateUIView(_ view: UITextView, context: Context) {
+    func updateUIView(_ view: ProseUITextView, context: Context) {
         let coordinator = context.coordinator
         coordinator.openURL = context.environment.openURL
         coordinator.selection = selection
@@ -26,16 +30,22 @@ struct ProseTextView: UIViewRepresentable {
             view.linkTextAttributes = [.foregroundColor: linkColor]
         }
         guard coordinator.shown !== text else { return }
+        let previous = coordinator.shown
         coordinator.shown = text
         coordinator.sizes.removeAll()
         let began = ContinuousClock.now
-        view.attributedText = text.string
+        let kept = view.show(text.string, replacing: previous?.string)
         StreamMarkdownDiagnostics.textUpdateMs += (ContinuousClock.now - began).milliseconds
+        if fades, stream?.animates == true, previous != nil || fadesFirstText, kept < text.string.length {
+            view.fadeIn(NSRange(location: kept, length: text.string.length - kept))
+        } else if stream?.animates != true {
+            view.finishFades()
+        }
         view.accessibilityTraits = text.headingLevel == nil ? coordinator.baseTraits : coordinator.baseTraits.union(.header)
         StreamMarkdownDiagnostics.textViewUpdates += 1
     }
 
-    func sizeThatFits(_ proposal: ProposedViewSize, uiView: UITextView, context: Context) -> CGSize? {
+    func sizeThatFits(_ proposal: ProposedViewSize, uiView: ProseUITextView, context: Context) -> CGSize? {
         let width = proposal.width ?? .greatestFiniteMagnitude
         if let size = context.coordinator.sizes[width] { return size }
         let began = ContinuousClock.now
@@ -56,7 +66,7 @@ struct ProseTextView: UIViewRepresentable {
 
 extension UITextView {
     /// A selectable, non-scrolling TextKit 2 text view with no insets, as every text of an answer is drawn in.
-    static func answerText(delegate: UITextViewDelegate) -> UITextView {
+    static func answerText(delegate: UITextViewDelegate) -> ProseUITextView {
         // The designated initializer, so the subclass's stored properties are set up; a nil container means TextKit 2.
         let view = ProseUITextView(frame: .zero, textContainer: nil)
         view.isEditable = false
@@ -95,7 +105,14 @@ class TextViewActions: NSObject, UITextViewDelegate {
 /// display formula's attachment draws nothing, and the view lays a sideways-scrolling view of the formula over it:
 /// UITextView never asks a TextKit 2 attachment for its view.
 final class ProseUITextView: UITextView {
+    static let fadeDuration = 0.3
+
     private var formulas: [(attachment: MathAttachment, location: Int, view: UIScrollView)] = []
+    /// Ranges fading in, oldest first, each with when it started and its part of the mask.
+    private var fades: [(range: NSRange, start: CFTimeInterval, part: CAShapeLayer)] = []
+    private let fadeMask = CALayer()
+    /// The mask's part over the text before the oldest fading range, which shows as it is.
+    private let settledPart = CAShapeLayer()
 
     override var attributedText: NSAttributedString! {
         didSet { placeFormulaViews() }
@@ -104,9 +121,146 @@ final class ProseUITextView: UITextView {
     override func layoutSubviews() {
         super.layoutSubviews()
         layoutFormulaViews()
+        if !fades.isEmpty { layoutFadeMask() }
     }
 
-    private func placeFormulaViews() {
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        if window == nil { finishFades() }
+    }
+
+    /// Shows `text`. When it begins as `previous` did, only what follows their longest common start, attributes
+    /// included, is replaced in the text storage, so TextKit lays out again only the paragraphs that changed.
+    /// Returns how many characters of `previous` start `text` as well, which are not new.
+    func show(_ text: NSAttributedString, replacing previous: NSAttributedString?) -> Int {
+        guard let previous, previous.length == textStorage.length else {
+            attributedText = text
+            return 0
+        }
+        let common = (previous.string as NSString).commonPrefix(with: text.string, options: .literal).utf16.count
+        let same = Self.sameAttributes(previous, text, upTo: common)
+        guard same > 0 else {
+            attributedText = text
+            return common
+        }
+        textStorage.beginEditing()
+        textStorage.replaceCharacters(in: NSRange(location: same, length: previous.length - same),
+                                      with: text.attributedSubstring(from: NSRange(location: same, length: text.length - same)))
+        textStorage.endEditing()
+        placeFormulaViews()
+        if !fades.isEmpty { layoutFadeMask() }
+        return common
+    }
+
+    /// How far from the start two strings carry equal attributes, up to `end`.
+    private static func sameAttributes(_ a: NSAttributedString, _ b: NSAttributedString, upTo end: Int) -> Int {
+        var location = 0
+        while location < end {
+            var first = NSRange(), second = NSRange()
+            let left = a.attributes(at: location, effectiveRange: &first)
+            let right = b.attributes(at: location, effectiveRange: &second)
+            guard NSDictionary(dictionary: left).isEqual(to: right) else { break }
+            location = min(first.upperBound, second.upperBound, end)
+        }
+        return location
+    }
+
+    // MARK: Fading in
+
+    /// Fades `range` in over ``fadeDuration``. The text draws at full strength under a mask: opaque over the settled
+    /// text, and one part per fading range whose opacity Core Animation ramps, so no frame of a fade redraws text or
+    /// runs on the main thread. Ramps are capped at 60 Hz, where a ProMotion screen would run them at 120.
+    func fadeIn(_ range: NSRange) {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        // Older fades give way where the new one starts, so no text is under two parts.
+        fades = fades.compactMap { fade in
+            let end = min(fade.range.upperBound, range.location)
+            guard end > fade.range.location else {
+                fade.part.removeFromSuperlayer()
+                return nil
+            }
+            return (NSRange(location: fade.range.location, length: end - fade.range.location), fade.start, fade.part)
+        }
+        let part = CAShapeLayer()
+        part.fillColor = UIColor.black.cgColor
+        let ramp = CABasicAnimation(keyPath: "opacity")
+        ramp.fromValue = 0
+        ramp.toValue = 1
+        ramp.duration = Self.fadeDuration
+        ramp.timingFunction = CAMediaTimingFunction(name: .easeOut)
+        ramp.preferredFrameRateRange = CAFrameRateRange(minimum: 30, maximum: 60, preferred: 60)
+        part.add(ramp, forKey: "fade")
+        if fadeMask.sublayers == nil {
+            settledPart.fillColor = UIColor.black.cgColor
+            fadeMask.addSublayer(settledPart)
+        }
+        fadeMask.addSublayer(part)
+        fades.append((range, CACurrentMediaTime(), part))
+        layer.mask = fadeMask
+        layoutFadeMask()
+        CATransaction.commit()
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.fadeDuration + 0.05) { [weak self] in self?.layoutFadeMask() }
+    }
+
+    /// Fits the mask to where the text is laid out now, since a word that grows can wrap to the next line, and drops
+    /// the parts whose ramp has finished; the mask goes once none is left. The settled part covers everything above the
+    /// paragraph where the oldest fade starts, and from there every character not fading, wherever its line puts it:
+    /// right-to-left text sits to the right of what follows it, and text shown without a fade can follow a fade.
+    private func layoutFadeMask() {
+        let now = CACurrentMediaTime()
+        fades.removeAll { fade in
+            guard now - fade.start >= Self.fadeDuration else { return false }
+            fade.part.removeFromSuperlayer()
+            return true
+        }
+        guard !fades.isEmpty, let layout = textLayoutManager, let content = layout.textContentManager else { return finishFades() }
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        fadeMask.frame = layer.bounds
+        let length = textStorage.length
+        var fading = IndexSet()
+        for fade in fades {
+            let range = NSIntersectionRange(fade.range, NSRange(location: 0, length: length))
+            fade.part.path = linesPath(of: range, in: layout)
+            if range.length > 0 { fading.insert(integersIn: range.location..<NSMaxRange(range)) }
+        }
+        let far: CGFloat = 100_000
+        let settled = CGMutablePath()
+        var from = 0
+        if let oldest = fading.first, let location = content.location(content.documentRange.location, offsetBy: oldest),
+           let paragraph = layout.textLayoutFragment(for: location) {
+            from = content.offset(from: content.documentRange.location, to: paragraph.rangeInElement.location)
+            settled.addRect(CGRect(x: -far, y: -far, width: 2 * far, height: far + paragraph.layoutFragmentFrame.minY + textContainerInset.top))
+        }
+        var shown = IndexSet(integersIn: from..<max(from, length))
+        shown.subtract(fading)
+        for run in shown.rangeView { settled.addPath(linesPath(of: NSRange(run), in: layout)) }
+        settledPart.path = settled
+        CATransaction.commit()
+    }
+
+    /// The boxes of the lines a range is laid out on, in the view's coordinates, a little larger since glyphs reach
+    /// past their line's box.
+    private func linesPath(of range: NSRange, in layout: NSTextLayoutManager) -> CGPath {
+        let path = CGMutablePath()
+        guard range.length > 0, let content = layout.textContentManager, let textRange = NSTextRange(range, in: content) else { return path }
+        layout.ensureLayout(for: textRange)
+        layout.enumerateTextSegments(in: textRange, type: .standard, options: []) { _, segment, _, _ in
+            path.addRect(segment.offsetBy(dx: textContainerInset.left, dy: textContainerInset.top).insetBy(dx: -2, dy: -2))
+            return true
+        }
+        return path
+    }
+
+    /// Shows everything at full strength now, as when the stream ends or Reduce Motion turns on.
+    func finishFades() {
+        fades.forEach { $0.part.removeFromSuperlayer() }
+        fades = []
+        if layer.mask === fadeMask { layer.mask = nil }
+    }
+
+    func placeFormulaViews() {
         var found: [(MathAttachment, Int)] = []
         let text = attributedText ?? NSAttributedString()
         text.enumerateAttribute(.attachment, in: NSRange(location: 0, length: text.length)) { value, range, _ in
@@ -198,6 +352,67 @@ extension NSAttributedString {
         guard glyph < layout.numberOfGlyphs,
               layout.boundingRect(forGlyphRange: NSRange(location: glyph, length: 1), in: container).insetBy(dx: -6, dy: -6).contains(point) else { return nil }
         return attribute(.link, at: layout.characterIndexForGlyph(at: glyph), effectiveRange: nil) as? URL
+    }
+}
+#endif
+
+#if canImport(UIKit)
+extension NSTextRange {
+    /// A range of UTF-16 offsets in a content manager's document.
+    convenience init?(_ range: NSRange, in content: NSTextContentManager) {
+        guard let start = content.location(content.documentRange.location, offsetBy: range.location),
+              let end = content.location(start, offsetBy: range.length) else { return nil }
+        self.init(location: start, end: end)
+    }
+}
+#endif
+
+#if DEBUG && canImport(UIKit)
+extension ProseUITextView {
+    /// Characters of the shown text that the fade mask leaves hidden: neither under the settled part nor under a
+    /// fading part. Empty when nothing is fading.
+    func hiddenByFadeMask() -> [Int] {
+        guard layer.mask === fadeMask, let layout = textLayoutManager, let content = layout.textContentManager else { return [] }
+        let parts = [settledPart] + fades.map(\.part)
+        return (0..<textStorage.length).filter { index in
+            guard let range = NSTextRange(NSRange(location: index, length: 1), in: content) else { return false }
+            var center: CGPoint?
+            layout.enumerateTextSegments(in: range, type: .standard, options: []) { _, segment, _, _ in
+                center = CGPoint(x: segment.midX + textContainerInset.left, y: segment.midY + textContainerInset.top)
+                return false
+            }
+            guard let center else { return false }
+            return !parts.contains { $0.path?.contains(center) == true }
+        }
+    }
+}
+
+@_spi(Diagnostics) extension StreamMarkdownDiagnostics {
+    /// Drives a block's text view through what a stream does to it and names each step after which shown text sits
+    /// outside the fade mask: text shown without fading while an earlier fade runs, and right-to-left text.
+    public static func fadeMaskProblems() -> [String] {
+        let steps: [(name: String, texts: [(String, fades: Bool)])] = [
+            ("unfaded text after a fade", [("Hello ", false), ("Hello there ", true), ("Hello there FINAL", false)]),
+            ("right-to-left text", [("مرحبا ", false), ("مرحبا بكم ", true), ("مرحبا بكم في ", true)]),
+            ("a word wrapping while it fades", [("A line of words that nearly fills the ", false), ("A line of words that nearly fills the width", true),
+                                                ("A line of words that nearly fills the widthwidth", true)]),
+        ]
+        var problems: [String] = []
+        for (name, texts) in steps {
+            let view = UITextView.answerText(delegate: TextViewActions())
+            view.frame = CGRect(x: 0, y: 0, width: 260, height: 300)
+            var previous: NSAttributedString?
+            for (text, fades) in texts {
+                let string = NSAttributedString(string: text, attributes: [.font: UIFont.systemFont(ofSize: 17), .foregroundColor: UIColor.label])
+                let kept = view.show(string, replacing: previous)
+                if fades, kept < string.length { view.fadeIn(NSRange(location: kept, length: string.length - kept)) }
+                previous = string
+                view.layoutIfNeeded()
+                let hidden = view.hiddenByFadeMask()
+                if !hidden.isEmpty { problems.append("\(name): \(hidden.count) characters hidden after \(text.debugDescription)") }
+            }
+        }
+        return problems
     }
 }
 #endif

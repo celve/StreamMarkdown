@@ -112,6 +112,8 @@ struct MathExtraction {
     /// `text` parsed.
     let document: Document
     private let replacements: [Replacement]
+    /// The formula the answer ends inside, if it ends inside one.
+    let unfinished: MathExtractor.UnfinishedMath?
 
     /// Where a stretch of the answer became its placeholder, in UTF-8 offsets of both texts.
     struct Replacement {
@@ -122,11 +124,19 @@ struct MathExtraction {
         let placeholder: Int
     }
 
-    fileprivate init(text: String, math: MathTable, document: Document, replacements: [Replacement]) {
+    fileprivate init(text: String, math: MathTable, document: Document, replacements: [Replacement], unfinished: MathExtractor.UnfinishedMath?) {
         self.text = text
         self.math = math
         self.document = document
         self.replacements = replacements
+        self.unfinished = unfinished
+    }
+
+    /// The same formulas with the parsed text's tail cut or closed, parsed again.
+    func repaired(_ repair: TailRepair.Result) -> MathExtraction {
+        let text = String(decoding: Array(text.utf8.prefix(repair.keep)), as: UTF8.self) + repair.closers
+        return MathExtraction(text: text, math: math, document: Document(parsing: text, options: MathExtractor.parseOptions),
+                              replacements: replacements, unfinished: nil)
     }
 
     /// An offset into the parsed text as an offset into the answer; one inside a replacement goes to its formula's start or end.
@@ -161,7 +171,8 @@ enum MathExtractor {
     static func extract(_ text: String) -> MathExtraction {
         let scan = Scan(text)
         guard !scan.spans.isEmpty else {
-            return MathExtraction(text: text, math: .empty, document: scan.document ?? Document(parsing: text, options: parseOptions), replacements: [])
+            return MathExtraction(text: text, math: .empty, document: scan.document ?? Document(parsing: text, options: parseOptions), replacements: [],
+                                  unfinished: scan.unfinished)
         }
         var parsed: [UInt8] = []
         parsed.reserveCapacity(scan.bytes.count + scan.spans.count * 8)
@@ -183,7 +194,8 @@ enum MathExtractor {
             text: parsedText,
             math: MathTable(spans: scan.spans.map(\.span)),
             document: Document(parsing: parsedText, options: parseOptions),
-            replacements: replacements
+            replacements: replacements,
+            unfinished: scan.unfinished
         )
     }
 

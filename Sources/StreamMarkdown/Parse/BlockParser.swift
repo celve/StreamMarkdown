@@ -64,8 +64,27 @@ struct BlockKey: Hashable, Sendable {
 enum BlockParser {
     /// The answer's root blocks, parsed whole by cmark-gfm so every block sees the answer's link reference definitions.
     /// Formulas are taken out first, so cmark never reads TeX as Markdown; ranges and sources are still the answer's.
-    static func parse(_ text: String) -> [ParsedBlock] {
-        let extraction = MathExtractor.extract(text)
+    /// `repairingTail` parses an answer still being written as ``TailRepair`` shows its end.
+    static func parse(_ text: String, repairingTail: Bool = false) -> [ParsedBlock] {
+        var text = text
+        var extraction = MathExtractor.extract(text)
+        var limit = text.utf8.count
+        if repairingTail {
+            var hold = extraction.unfinished.flatMap { TailRepair.holds($0, in: text) ? $0.start : nil }
+            // A `$` that closes at the very end may still be followed by a digit, which would make it currency.
+            if let last = extraction.math.spans.last, last.delimiter == .dollar, last.range.upperBound == limit {
+                hold = min(hold ?? last.range.lowerBound, last.range.lowerBound)
+            }
+            if let hold {
+                text = String(decoding: Array(text.utf8.prefix(hold)), as: UTF8.self)
+                extraction = MathExtractor.extract(text)
+                limit = hold
+            }
+            if let repair = TailRepair.repair(extraction.text, document: extraction.document) {
+                limit = min(limit, extraction.answerOffset(repair.keep))
+                extraction = extraction.repaired(repair)
+            }
+        }
         let lines = LineStarts(extraction.text)
         let bytes = Array(extraction.text.utf8)
         var blocks: [ParsedBlock] = []
@@ -82,7 +101,7 @@ enum BlockParser {
                 range = previousEnd..<previousEnd
             }
             previousEnd = range.upperBound
-            let answerRange = extraction.answerOffset(range.lowerBound)..<extraction.answerOffset(range.upperBound)
+            let answerRange = min(extraction.answerOffset(range.lowerBound), limit)..<min(extraction.answerOffset(range.upperBound), limit)
             let utf8 = text.utf8
             let source = String(text[utf8.index(utf8.startIndex, offsetBy: answerRange.lowerBound)..<utf8.index(utf8.startIndex, offsetBy: answerRange.upperBound)])
             let kind = BlockKind(markup, math: extraction.math)

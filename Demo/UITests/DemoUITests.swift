@@ -40,6 +40,19 @@ final class DemoUITests: XCTestCase {
         return UIAccessibilityTraits(rawValue: (snapshot.value(forKey: "traits") as? UInt64) ?? 0)
     }
 
+    /// The fade mask, on the real text view: shown text is never left outside it, whatever direction it runs or
+    /// whether it arrived fading.
+    func testTheFadeMaskCoversShownText() {
+        app.terminate()
+        app.launchArguments = ["-fadeProbe", "1"]
+        app.launch()
+        let probe = app.staticTexts["fade-probe"]
+        XCTAssertTrue(probe.waitForExistence(timeout: 20))
+        let deadline = Date().addingTimeInterval(10)
+        while probe.label == "…", Date() < deadline { usleep(200_000) }
+        XCTAssertEqual(probe.label, "fade mask: ok")
+    }
+
     func testOneBlockHoldsTheSelection() {
         app.terminate()
         app.launchArguments = ["-answer", "showcase", "-rate", "0", "-hud", "1"]

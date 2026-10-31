@@ -51,6 +51,8 @@ struct ProseBuilder: MarkupWalker {
     private var italic = false
     private var strikethrough = false
     private var link: URL?
+    /// Inside a reference link whose definition has not arrived: drawn as a link, but nothing to open yet.
+    private var linkPending = false
 
     private init(style: ResolvedStyle, color: PlatformColor?, math: MathTable, context: RenderContext = RenderContext()) {
         self.style = style
@@ -257,10 +259,10 @@ struct ProseBuilder: MarkupWalker {
     }
 
     mutating func visitLink(_ link: Link) {
-        let outer = self.link
-        self.link = link.destination.flatMap(URL.init(string:)) ?? outer
+        let outer = (self.link, linkPending)
+        if link.destination == TailRepair.pendingLink { linkPending = true } else { self.link = link.destination.flatMap(URL.init(string:)) ?? outer.0 }
         descendInto(link)
-        self.link = outer
+        (self.link, linkPending) = outer
     }
 
     mutating func visitImage(_ image: Image) {
@@ -309,6 +311,8 @@ struct ProseBuilder: MarkupWalker {
         if strikethrough { attributes[.strikethroughStyle] = NSUnderlineStyle.single.rawValue }
         if let link {
             attributes[.link] = link
+            attributes[.foregroundColor] = style.link
+        } else if linkPending {
             attributes[.foregroundColor] = style.link
         }
         return attributes

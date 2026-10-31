@@ -242,9 +242,3 @@ final class Probe: @unchecked Sendable {
     }
 }
 
-private final class Flag: @unchecked Sendable {
-    private let lock = NSLock()
-    private var isSet = false
-    var value: Bool { lock.withLock { isSet } }
-    func set() { lock.withLock { isSet = true } }
-}

@@ -2,14 +2,17 @@
 import SwiftUI
 
 /// Replays recorded answers through StreamMarkdownView. Launch arguments: `-answer <id>` opens one, `-rate <tokens/s>`
-/// sets the pace (0 for instant), `-hud 0` hides the meter, `-scrollY <points>` scrolls the answer there once it is shown;
-/// `-perf 1` runs LIN-2404's measurement instead (see PerfRun).
+/// sets the pace (0 for instant), `-hud 0` hides the meter, `-scrollY <points>` scrolls the answer there once it is shown,
+/// `-follow 1` keeps its end in view as it grows; `-perf 1` runs LIN-2404's measurement instead (see PerfRun), and
+/// `-fadeProbe 1` checks the fade mask on a text view (Debug builds).
 @main
 struct DemoApp: App {
     var body: some Scene {
         WindowGroup {
             if UserDefaults.standard.bool(forKey: "perf") || UserDefaults.standard.bool(forKey: "stream") {
                 PerfRun()
+            } else if UserDefaults.standard.bool(forKey: "fadeProbe") {
+                FadeProbe()
             } else {
                 AnswerList()
             }
@@ -48,6 +51,7 @@ struct ReplayScreen: View {
     @State private var copied: String?
     @State private var position = ScrollPosition(edge: .top)
     private let showsMeter = UserDefaults.standard.object(forKey: "hud") == nil || UserDefaults.standard.bool(forKey: "hud")
+    private let follows = UserDefaults.standard.bool(forKey: "follow")
 
     var body: some View {
         ScrollView {
@@ -55,6 +59,9 @@ struct ReplayScreen: View {
                 .padding()
         }
         .scrollPosition($position)
+        .onScrollGeometryChange(for: CGFloat.self) { $0.contentSize.height } action: { _, _ in
+            if follows { position.scrollTo(edge: .bottom) }
+        }
         .safeAreaInset(edge: .top) { if showsMeter { Meter() } }
         .overlay(alignment: .bottom) {
             if let opened {
@@ -146,6 +153,25 @@ struct Meter: View {
                                      StreamMarkdownDiagnostics.textViewUpdates, StreamMarkdownDiagnostics.textViews,
                                      StreamMarkdownDiagnostics.selectedTextViews)
                 }
+            }
+    }
+}
+
+/// Shows what `StreamMarkdownDiagnostics.fadeMaskProblems()` finds, for a UI test to read.
+struct FadeProbe: View {
+    @State private var result = "…"
+
+    var body: some View {
+        Text(result)
+            .padding()
+            .accessibilityIdentifier("fade-probe")
+            .task {
+                #if DEBUG
+                let problems = StreamMarkdownDiagnostics.fadeMaskProblems()
+                result = problems.isEmpty ? "fade mask: ok" : problems.joined(separator: " | ")
+                #else
+                result = "fade mask: needs a Debug build"
+                #endif
             }
     }
 }
