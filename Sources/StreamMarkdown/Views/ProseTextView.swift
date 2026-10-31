@@ -11,7 +11,8 @@ struct ProseTextView: UIViewRepresentable {
     func makeCoordinator() -> Coordinator { Coordinator() }
 
     func makeUIView(context: Context) -> UITextView {
-        let view = ProseUITextView(usingTextLayoutManager: true)
+        // The designated initializer, so the subclass's stored properties are set up; a nil container means TextKit 2.
+        let view = ProseUITextView(frame: .zero, textContainer: nil)
         view.isEditable = false
         view.isSelectable = true
         view.isScrollEnabled = false
@@ -78,8 +79,62 @@ struct ProseTextView: UIViewRepresentable {
     }
 }
 
-/// A block's text view, read aloud with each formula as its TeX where UIKit would read the attachment character.
+/// A block's text view, read aloud with each formula as its TeX where UIKit would read the attachment character. A
+/// display formula's attachment draws nothing, and the view lays a sideways-scrolling view of the formula over it:
+/// UITextView never asks a TextKit 2 attachment for its view.
 final class ProseUITextView: UITextView {
+    private var formulas: [(attachment: MathAttachment, location: Int, view: UIScrollView)] = []
+
+    override var attributedText: NSAttributedString! {
+        didSet { placeFormulaViews() }
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        layoutFormulaViews()
+    }
+
+    private func placeFormulaViews() {
+        var found: [(MathAttachment, Int)] = []
+        let text = attributedText ?? NSAttributedString()
+        text.enumerateAttribute(.attachment, in: NSRange(location: 0, length: text.length)) { value, range, _ in
+            if let math = value as? MathAttachment, math.isDisplay { found.append((math, range.location)) }
+        }
+        guard found.map({ ObjectIdentifier($0.0) }) != formulas.map({ ObjectIdentifier($0.attachment) }) || found.map(\.1) != formulas.map(\.location) else { return }
+        formulas.forEach { $0.view.removeFromSuperview() }
+        formulas = found.compactMap { attachment, location in
+            guard let image = attachment.rendered?.image else { return nil }
+            let imageView = UIImageView(image: image)
+            imageView.tintColor = attachment.color
+            imageView.frame = CGRect(origin: .zero, size: image.size)
+            let scroll = UIScrollView()
+            scroll.addSubview(imageView)
+            scroll.contentSize = image.size
+            scroll.showsHorizontalScrollIndicator = false
+            scroll.showsVerticalScrollIndicator = false
+            scroll.isAccessibilityElement = true
+            scroll.accessibilityLabel = attachment.tex
+            scroll.accessibilityIdentifier = "math"
+            addSubview(scroll)
+            return (attachment, location, scroll)
+        }
+        setNeedsLayout()
+    }
+
+    private func layoutFormulaViews() {
+        guard !formulas.isEmpty, let layout = textLayoutManager, let content = layout.textContentManager else { return }
+        for formula in formulas {
+            guard let size = formula.attachment.rendered?.size, let baseline = formula.attachment.rendered?.baseline,
+                  let start = content.location(content.documentRange.location, offsetBy: formula.location),
+                  let end = content.location(start, offsetBy: 1), let range = NSTextRange(location: start, end: end) else { continue }
+            layout.ensureLayout(for: range)
+            layout.enumerateTextSegments(in: range, type: .standard, options: []) { _, segment, baselinePosition, _ in
+                let top = segment.minY + baselinePosition - (size.height - baseline)
+                formula.view.frame = CGRect(x: segment.minX + textContainerInset.left, y: top + textContainerInset.top, width: segment.width, height: size.height)
+                return false
+            }
+        }
+    }
     override var accessibilityValue: String? {
         get {
             let text = attributedText ?? NSAttributedString()

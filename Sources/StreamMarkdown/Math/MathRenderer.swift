@@ -101,19 +101,25 @@ enum MathRenderer {
 }
 
 /// A formula in a text view, labelled with its TeX. An inline one sits on the baseline and shrinks to the line when
-/// wider; a display one takes the line's width and scrolls sideways inside it.
+/// wider; a display one takes the line's width and draws nothing, for the text view to cover with a scrolling view.
 final class MathAttachment: NSTextAttachment {
     private(set) var tex = ""
     private(set) var isDisplay = false
     /// The text's colour, which a display formula's view is tinted with.
     private(set) var color: PlatformColor?
+    private(set) var rendered: RenderedMath?
 
     init(_ math: RenderedMath, tex: String, display: Bool = false, color: PlatformColor? = nil) {
         self.tex = tex
         isDisplay = display
         self.color = color
+        rendered = math
         super.init(data: nil, ofType: nil)
+        #if canImport(UIKit)
+        if !display { image = math.image }
+        #else
         image = math.image
+        #endif
         bounds = CGRect(x: 0, y: -math.baseline, width: math.size.width, height: math.size.height)
     }
 
@@ -145,46 +151,12 @@ final class MathAttachment: NSTextAttachment {
         guard let image, let color = attributes[.foregroundColor] as? UIColor else { return image }
         return image.withTintColor(color, renderingMode: .alwaysOriginal)
     }
-
-    override func viewProvider(for parentView: UIView?, location: any NSTextLocation, textContainer: NSTextContainer?) -> NSTextAttachmentViewProvider? {
-        guard isDisplay else { return nil }
-        return DisplayMathViewProvider(textAttachment: self, parentView: parentView, textLayoutManager: textContainer?.textLayoutManager, location: location)
-    }
     #endif
 
     override func isEqual(_ object: Any?) -> Bool {
         guard let other = object as? MathAttachment else { return false }
-        return other.tex == tex && other.isDisplay == isDisplay && other.color == color && other.bounds == bounds && other.image === image
+        return other.tex == tex && other.isDisplay == isDisplay && other.color == color && other.bounds == bounds && other.rendered === rendered
     }
 
     override var hash: Int { tex.hashValue }
 }
-
-#if canImport(UIKit)
-/// A display formula inside prose: its image in a sideways-scrolling view as wide as the line.
-final class DisplayMathViewProvider: NSTextAttachmentViewProvider {
-    /// TextKit loads attachment views on the main thread, though the method is not marked so.
-    override func loadView() {
-        guard let found = textAttachment as? MathAttachment, let image = found.image else { return }
-        nonisolated(unsafe) let attachment = found, provider = self
-        MainActor.assumeIsolated {
-            let imageView = UIImageView(image: image)
-            imageView.tintColor = attachment.color
-            imageView.frame = CGRect(origin: .zero, size: image.size)
-            let scroll = UIScrollView()
-            scroll.addSubview(imageView)
-            scroll.contentSize = image.size
-            scroll.showsHorizontalScrollIndicator = false
-            scroll.showsVerticalScrollIndicator = false
-            scroll.isAccessibilityElement = true
-            scroll.accessibilityLabel = attachment.tex
-            scroll.accessibilityIdentifier = "math"
-            provider.view = scroll
-        }
-    }
-
-    override func attachmentBounds(for attributes: [NSAttributedString.Key: Any], location: any NSTextLocation, textContainer: NSTextContainer?, proposedLineFragment: CGRect, position: CGPoint) -> CGRect {
-        MathAttachment.bounds(textAttachment?.bounds ?? .zero, display: true, within: proposedLineFragment.width - position.x)
-    }
-}
-#endif
