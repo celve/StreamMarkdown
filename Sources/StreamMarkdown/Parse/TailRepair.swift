@@ -21,7 +21,7 @@ enum TailRepair {
     static func repair(_ text: String, document: Document) -> Result? {
         let tail = Tail(bytes: Array(text.utf8), lines: LineStarts(text))
         let leaf = leaf(of: document)
-        var result = tail.repair(leaf: leaf) ?? Result(keep: tail.bytes.count, closers: "")
+        var result = repairTail(tail, leaf: leaf) ?? Result(keep: tail.bytes.count, closers: "")
         if !(leaf is CodeBlock || leaf is HTMLBlock) {
             let labels = tail.referenceLabels(before: result.keep)
             if !labels.isEmpty {
@@ -29,6 +29,17 @@ enum TailRepair {
             }
         }
         return result == Result(keep: tail.bytes.count, closers: "") ? nil : result
+    }
+
+    /// A last line cut away whole leaves the line before it as the end, which is parsed again and repaired in turn.
+    private static func repairTail(_ tail: Tail, leaf: Markup?, depth: Int = 0) -> Result? {
+        guard let result = tail.repair(leaf: leaf) else { return nil }
+        let keep = result.keep
+        guard depth < 3, result.closers.isEmpty, keep > 0, keep < tail.bytes.count,
+              tail.bytes[keep - 1] == UInt8(ascii: "\n") || tail.bytes[keep - 1] == UInt8(ascii: "\r") else { return result }
+        let prefix = String(decoding: tail.bytes.prefix(keep), as: UTF8.self)
+        let shorter = Tail(bytes: Array(tail.bytes.prefix(keep)), lines: LineStarts(prefix))
+        return repairTail(shorter, leaf: self.leaf(of: Document(parsing: prefix, options: MathExtractor.parseOptions)), depth: depth + 1) ?? result
     }
 
     /// Whether an unclosed formula at the end is held back: a display one until it closes, an inline one while it is at
@@ -71,7 +82,8 @@ private struct Tail {
         if lineEnd > 0, bytes[lineEnd - 1] == .carriageReturn { lineEnd -= 1 }
         let endsLine = lineEnd < bytes.count
         let lineStart = start(ofLineAt: lineEnd)
-        guard (lineStart..<lineEnd).contains(where: { !bytes[$0].isWhitespace }) else { return nil }
+        // A last line of white space may still go on the paragraph above it, unless a line break ended it blank.
+        guard (lineStart..<lineEnd).contains(where: { !bytes[$0].isWhitespace }) else { return endsLine || lineStart == lineEnd ? nil : keep(lineStart) }
         let inLeaf = leaf.flatMap { $0.range }.map { lines.offset(of: $0.upperBound) >= lineStart } ?? false
 
         switch inLeaf ? leaf : nil {
@@ -87,9 +99,10 @@ private struct Tail {
             return endsLine ? nil : keep(lineStart)
         case let paragraph as Paragraph:
             if let held = holdTableHeader(paragraph, lineStart: lineStart) { return held }
-            return repairProse(lineStart: lineStart, lineEnd: lineEnd, endsLine: endsLine)
+            let first = paragraph.range.map { lines.lineStart(of: $0.lowerBound.line) } ?? lineStart
+            return repairProse(lineStart: lineStart, lineEnd: lineEnd, endsLine: endsLine, paragraphStart: min(first, lineStart))
         default:
-            return repairProse(lineStart: lineStart, lineEnd: lineEnd, endsLine: endsLine)
+            return repairProse(lineStart: lineStart, lineEnd: lineEnd, endsLine: endsLine, paragraphStart: lineStart)
         }
     }
 
@@ -134,20 +147,49 @@ private struct Tail {
 
     // MARK: Prose
 
-    private func repairProse(lineStart: Int, lineEnd: Int, endsLine: Bool) -> TailRepair.Result? {
+    /// The last line's own rules, then the inline rules over the whole paragraph it ends, whose spans can cross soft
+    /// breaks: the paragraph's lines without their container markers, joined by line breaks, are read as one text.
+    private func repairProse(lineStart: Int, lineEnd: Int, endsLine: Bool, paragraphStart: Int) -> TailRepair.Result? {
         let (content, afterMarker) = contentStart(lineStart, before: lineEnd)
-        let end = trimmedEnd(content, lineEnd)
-        if !endsLine, startsSomethingElse(content..<end, afterMarker: afterMarker) { return keep(lineStart) }
-        guard content < end else { return nil }
+        if !endsLine, startsSomethingElse(content..<trimmedEnd(content, lineEnd), afterMarker: afterMarker) { return keep(lineStart) }
+        var joined: [UInt8] = []
+        // Where each joined byte stands in the text; a joining line break stands at the line break it replaces.
+        var positions: [Int] = []
+        var firstAfterMarker = false
+        var line = paragraphStart
+        while true {
+            let end = line == lineStart ? lineEnd : endOfLine(from: line)
+            let (start, marker) = contentStart(line, before: end)
+            if line == paragraphStart {
+                firstAfterMarker = marker
+            } else {
+                joined.append(.newline)
+                positions.append(line - 1)
+            }
+            joined += bytes[start..<end]
+            positions += start..<end
+            guard line < lineStart, end < bytes.count else { break }
+            line = end + (bytes[end] == .carriageReturn && end + 1 < bytes.count && bytes[end + 1] == .newline ? 2 : 1)
+        }
+        guard let repair = Tail(bytes: joined, lines: lines).repairInlines(afterMarker: firstAfterMarker) else { return nil }
+        guard repair.keep > 0 else { return keep(paragraphStart) }
+        let kept = positions[repair.keep - 1] + 1
+        return TailRepair.Result(keep: repair.closers.isEmpty && repair.keep == joined.count && kept == lineEnd && !endsLine ? bytes.count : kept,
+                                 closers: repair.closers)
+    }
 
-        var limit = end
+    /// Code spans, links and emphasis over all of `bytes`, one paragraph's text: where to cut it and what to close.
+    /// Nil when it needs neither; a `keep` of 0 cuts it whole.
+    private func repairInlines(afterMarker: Bool) -> TailRepair.Result? {
+        var limit = trimmedEnd(0, bytes.count)
+        guard limit > 0 else { return nil }
         var didCut = false
         // A cut can leave a marker at the new end, so look again until nothing changes.
         for _ in 0..<4 {
-            let scan = scanInlines(content..<limit, afterMarker: afterMarker)
+            let scan = scanInlines(0..<limit, afterMarker: afterMarker)
             var cut = scan.cut
             let runs = scan.runs.filter { $0.end <= (cut ?? limit) }
-            let kept = trimmedEnd(content, cut ?? limit)
+            let kept = trimmedEnd(0, cut ?? limit)
             let open = matchEmphasis(runs.filter { $0.end <= kept })
             if let dangling = unmatchedAtEnd(runs, kept) {
                 cut = min(cut ?? dangling.start, dangling.start)
@@ -157,13 +199,14 @@ private struct Tail {
             }
             if let cut {
                 didCut = true
-                limit = trimmedEnd(content, cut)
-                if limit <= content { return keep(lineStart) }
+                limit = trimmedEnd(0, cut)
+                if limit == 0 { return keep(0) }
                 continue
             }
             var closers = ""
             if let code = scan.openCode, code.start < kept { closers += String(repeating: "`", count: code.length) }
-            for opener in open.reversed() where opener.count > 0 {
+            // A single tilde is closed by one, as cmark-gfm strikes it through, but never closed early: `~5%` means about.
+            for opener in open.reversed() where opener.count > 0 && !(opener.run.marker == .tilde && opener.run.length == 1) {
                 closers += String(repeating: Character(Unicode.Scalar(opener.run.marker)), count: opener.count)
             }
             if closers.isEmpty { return didCut ? keep(kept) : nil }
@@ -263,8 +306,8 @@ private struct Tail {
             case .asterisk, .underscore, .tilde:
                 let length = run(of: byte, at: index, before: end)
                 var run = delimiterRun(byte, start: index, length: length, lineStart: line.lowerBound, end: end)
-                // GFM strikes through between tildes of the same count; a single one is usually "about", so it never opens.
-                if byte == .tilde && length != 2 { run = Run(marker: byte, start: index, length: length, canOpen: false, canClose: false) }
+                // cmark-gfm strikes through between runs of one or two tildes of the same count; three are text.
+                if byte == .tilde && length > 2 { run = Run(marker: byte, start: index, length: length, canOpen: false, canClose: false) }
                 scan.runs.append(run)
                 index += length
             case .lessThan:
@@ -411,7 +454,7 @@ private struct Tail {
 
     private func trimmedEnd(_ start: Int, _ end: Int) -> Int {
         var end = end
-        while end > start, bytes[end - 1] == .space || bytes[end - 1] == .tab { end -= 1 }
+        while end > start, bytes[end - 1].isWhitespace { end -= 1 }
         return end
     }
 

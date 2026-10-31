@@ -242,7 +242,8 @@ final class ProseUITextView: UITextView {
         CATransaction.commit()
     }
 
-    private func finishFades() {
+    /// Shows everything at full strength now, as when the stream ends or Reduce Motion turns on.
+    func finishFades() {
         fades.forEach { $0.part.removeFromSuperlayer() }
         fades = []
         if layer.mask === fadeMask { layer.mask = nil }
@@ -351,6 +352,56 @@ extension NSTextRange {
         guard let start = content.location(content.documentRange.location, offsetBy: range.location),
               let end = content.location(start, offsetBy: range.length) else { return nil }
         self.init(location: start, end: end)
+    }
+}
+#endif
+
+#if DEBUG && canImport(UIKit)
+extension ProseUITextView {
+    /// Characters of the shown text that the fade mask leaves hidden: neither under the settled part nor under a
+    /// fading part. Empty when nothing is fading.
+    func hiddenByFadeMask() -> [Int] {
+        guard layer.mask === fadeMask, let layout = textLayoutManager, let content = layout.textContentManager else { return [] }
+        let parts = [settledPart] + fades.map(\.part)
+        return (0..<textStorage.length).filter { index in
+            guard let range = NSTextRange(NSRange(location: index, length: 1), in: content) else { return false }
+            var center: CGPoint?
+            layout.enumerateTextSegments(in: range, type: .standard, options: []) { _, segment, _, _ in
+                center = CGPoint(x: segment.midX + textContainerInset.left, y: segment.midY + textContainerInset.top)
+                return false
+            }
+            guard let center else { return false }
+            return !parts.contains { $0.path?.contains(center) == true }
+        }
+    }
+}
+
+@_spi(Diagnostics) extension StreamMarkdownDiagnostics {
+    /// Drives a block's text view through what a stream does to it and names each step after which shown text sits
+    /// outside the fade mask: text shown without fading while an earlier fade runs, and right-to-left text.
+    public static func fadeMaskProblems() -> [String] {
+        let steps: [(name: String, texts: [(String, fades: Bool)])] = [
+            ("unfaded text after a fade", [("Hello ", false), ("Hello there ", true), ("Hello there FINAL", false)]),
+            ("right-to-left text", [("مرحبا ", false), ("مرحبا بكم ", true), ("مرحبا بكم في ", true)]),
+            ("a word wrapping while it fades", [("A line of words that nearly fills the ", false), ("A line of words that nearly fills the width", true),
+                                                ("A line of words that nearly fills the widthwidth", true)]),
+        ]
+        var problems: [String] = []
+        for (name, texts) in steps {
+            let view = UITextView.answerText(delegate: TextViewActions())
+            view.frame = CGRect(x: 0, y: 0, width: 260, height: 300)
+            var previous: NSAttributedString?
+            for (text, fades) in texts {
+                let string = NSAttributedString(string: text, attributes: [.font: UIFont.systemFont(ofSize: 17), .foregroundColor: UIColor.label])
+                let kept = view.show(string, replacing: previous)
+                if fades, kept < string.length { view.fadeIn(NSRange(location: kept, length: string.length - kept)) }
+                previous = string
+                view.layoutIfNeeded()
+                let hidden = view.hiddenByFadeMask()
+                if !hidden.isEmpty { problems.append("\(name): \(hidden.count) characters hidden after \(text.debugDescription)") }
+            }
+        }
+        return problems
     }
 }
 #endif
