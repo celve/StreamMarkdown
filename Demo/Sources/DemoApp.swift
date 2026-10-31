@@ -2,7 +2,8 @@
 import SwiftUI
 
 /// Replays recorded answers through StreamMarkdownView. Launch arguments: `-answer <id>` opens one, `-rate <tokens/s>`
-/// sets the pace (0 for instant), `-hud 0` hides the meter; `-perf 1` runs LIN-2404's measurement instead (see PerfRun).
+/// sets the pace (0 for instant), `-hud 0` hides the meter, `-scrollY <points>` scrolls the answer there once it is shown;
+/// `-perf 1` runs LIN-2404's measurement instead (see PerfRun).
 @main
 struct DemoApp: App {
     var body: some Scene {
@@ -45,6 +46,7 @@ struct ReplayScreen: View {
     }()
     @State private var opened: URL?
     @State private var copied: String?
+    @State private var position = ScrollPosition(edge: .top)
     private let showsMeter = UserDefaults.standard.object(forKey: "hud") == nil || UserDefaults.standard.bool(forKey: "hud")
 
     var body: some View {
@@ -52,6 +54,7 @@ struct ReplayScreen: View {
             StreamMarkdownView(replay.shown, isStreaming: replay.isStreaming)
                 .padding()
         }
+        .scrollPosition($position)
         .safeAreaInset(edge: .top) { if showsMeter { Meter() } }
         .overlay(alignment: .bottom) {
             if let opened {
@@ -103,7 +106,13 @@ struct ReplayScreen: View {
             }
         }
         .onChange(of: rate) { start() }
-        .task { start() }
+        .task {
+            start()
+            let y = UserDefaults.standard.double(forKey: "scrollY")
+            guard y > 0 else { return }
+            try? await Task.sleep(for: .seconds(1))
+            position.scrollTo(y: y)
+        }
     }
 
     private func start() {

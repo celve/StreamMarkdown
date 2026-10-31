@@ -11,7 +11,7 @@ def merge(layer):
     layer.base.weight += layer.B @ layer.A * layer.scale  # fold the update into W0 before serving
 
 class LoRALinear(nn.Module):
-    """A frozen linear layer plus a trainable low-rank update, scaled by alpha / r as in Section 4.1."""
+    """A frozen linear layer plus a trainable low-rank update B @ A, scaled by alpha / r as in Section 4.1 of the paper; only A and B ever receive gradients."""
     def __init__(self, base: nn.Linear, r: int = 8, alpha: float = 16.0):
         super().__init__()
         self.base = base.requires_grad_(False)
@@ -32,12 +32,12 @@ python train.py --model meta-llama/Llama-3.1-8B --lora-r 16 --lora-alpha 32 --ta
 
 A table keeps its header on one line, follows each column's alignment, and scrolls when it is wider than the screen:
 
-| Method | Trainable parameters | GPU memory | WikiSQL | MNLI-m | SAMSum R1 / R2 / RL | Paper |
-|:--|--:|--:|:-:|:-:|:-:|:--|
-| Full fine-tuning | 175,255.8M | 1.2 TB | 73.8 | 89.5 | 52.0 / 28.0 / 44.5 | [GPT-3](https://arxiv.org/abs/2005.14165) |
-| Adapter | 40.1M | 350 GB | 73.2 | 91.5 | 53.2 / 29.0 / 45.1 | [Houlsby et al.](https://arxiv.org/abs/1902.00751) |
-| Prefix tuning | 20.2M | 350 GB | 63.1 | 88.6 | 48.3 / 24.2 / 40.5 | — |
-| **LoRA** | **4.7M** | **350 GB** | **73.4** | **91.7** | **53.8 / 29.8 / 45.9** | [Hu et al.](https://arxiv.org/abs/2106.09685) |
+| Method | Trainable parameters | GPU memory | Extra inference latency | WikiSQL | MNLI-m | SAMSum R1 / R2 / RL | Paper |
+|:--|--:|--:|:--|:-:|:-:|:-:|:--|
+| Full fine-tuning | 175,255.8M | 1.2 TB | none | 73.8 | 89.5 | 52.0 / 28.0 / 44.5 | [GPT-3](https://arxiv.org/abs/2005.14165) |
+| Adapter | 40.1M | 350 GB | up to 30% at batch size 1 | 73.2 | 91.5 | 53.2 / 29.0 / 45.1 | [Houlsby et al.](https://arxiv.org/abs/1902.00751) |
+| Prefix tuning | 20.2M | 350 GB | longer sequences | 63.1 | 88.6 | 48.3 / 24.2 / 40.5 | — |
+| **LoRA** | **4.7M** | **350 GB** | **none once merged** | **73.4** | **91.7** | **53.8 / 29.8 / 45.9** | [Hu et al.](https://arxiv.org/abs/2106.09685) |
 
 Long cells wrap at the column's width instead of stretching the table:
 

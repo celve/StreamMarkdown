@@ -29,8 +29,8 @@ final class CodeTableUITests: XCTestCase {
     func testLongCodeScrollsSidewaysByDrag() {
         let code = textView("import torch"), language = app.staticTexts["python"].firstMatch
         let before = code.frame, label = language.frame
-        XCTAssertGreaterThan(before.maxX, answer.frame.maxX, "long lines do not wrap")
-        drag(from: CGPoint(x: answer.frame.minX + answer.frame.width * 0.7, y: before.minY + 40), by: CGVector(dx: -250, dy: 0))
+        XCTAssertGreaterThan(before.maxX, app.buttons["Copy code"].firstMatch.frame.maxX + 100, "long lines run past the block instead of wrapping")
+        drag(from: CGPoint(x: app.buttons["Copy code"].firstMatch.frame.minX - 40, y: before.minY + 40), by: CGVector(dx: -250, dy: 0))
         // XCTest clips a frame at the screen's edge, so a code view moved 250 points left reads as starting at 0.
         XCTAssertLessThan(code.frame.minX, before.minX - 20, "the code moved left")
         XCTAssertEqual(language.frame, label, "the header stays put")
