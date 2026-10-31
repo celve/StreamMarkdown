@@ -53,7 +53,8 @@ enum MarkdownCompiler {
                 (content, blockRevision) = (old.content, old.revision)
             } else {
                 let cells = parsed.index < previous.count ? previous[parsed.index].content.tableCells : [:]
-                content = BlockRenderer.render(parsed.markup, kind: parsed.kind, source: parsed.source, style: style, context: context, cells: cells)
+                content = BlockRenderer.render(parsed.markup, kind: parsed.kind, source: parsed.source, style: style, math: parsed.math,
+                                               context: context, cells: cells)
                 blockRevision = revision
                 revision += 1
                 built += 1

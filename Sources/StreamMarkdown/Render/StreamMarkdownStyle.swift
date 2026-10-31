@@ -28,6 +28,8 @@ public struct StreamMarkdownStyle: Hashable, Sendable {
     ]
     /// Inline code's size as a multiple of the text around it; the face is monospaced.
     public var inlineCodeScale: CGFloat = 0.88
+    /// Formulas' size as a multiple of the text around them: a math face reads smaller than the serif body at one size.
+    public var mathScale: CGFloat = 1.1
     /// Code blocks, and HTML drawn as its source.
     public var source = FontToken(.footnote, design: .monospaced)
     /// Table cells, and header cells.

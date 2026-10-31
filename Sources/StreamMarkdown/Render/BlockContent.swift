@@ -2,7 +2,7 @@ import Foundation
 import Markdown
 
 /// What a block draws as. A piece that renders another kind natively (math, code, tables) adds a case here, a branch in
-/// ``BlockRenderer/render(_:kind:source:style:color:context:cells:)``, and a view for it in `BlockContentView`.
+/// ``BlockRenderer/render(_:kind:source:style:color:math:context:cells:)``, and a view for it in `BlockContentView`.
 enum BlockContent: Sendable {
     /// Prose in one text view: a paragraph, a heading or a whole list.
     case text(RichText)
@@ -16,6 +16,8 @@ enum BlockContent: Sendable {
     case stack([StackItem])
     /// Monospaced source, for what no renderer handles natively: HTML.
     case source(RichText)
+    /// Display formulas, each centred on its own line.
+    case math([DisplayFormula])
 
     /// A table's cell texts by their keys, for the next parse of the same block to keep.
     var tableCells: [String: RichText] {
@@ -24,6 +26,15 @@ enum BlockContent: Sendable {
         for row in table.rows { for cell in row { cells[cell.key] = cell.text } }
         return cells
     }
+}
+
+/// A display formula as SwiftMath drew it, or its source when SwiftMath could not.
+struct DisplayFormula: @unchecked Sendable, Identifiable {
+    let id: Int
+    let tex: String
+    let rendered: RenderedMath?
+    let fallback: RichText
+    let color: PlatformColor
 }
 
 struct QuotedBlock: Sendable, Identifiable {
@@ -70,47 +81,67 @@ struct RenderContext: Hashable, Sendable {
 /// Turns a parsed block into what it draws as: the seam later pieces extend.
 enum BlockRenderer {
     /// `source` is the block's text in the answer, or nil inside a quote, where the quote's markers prefix every line.
-    /// `cells` are the cell texts of this block's last parse, which a table keeps where a cell is unchanged.
-    static func render(_ markup: Markup, kind: BlockKind, source: String?, style: ResolvedStyle, color: PlatformColor? = nil,
+    /// `math` holds the formulas the markup's text names by placeholder. `cells` are the cell texts of this block's
+    /// last parse, which a table keeps where a cell is unchanged.
+    static func render(_ markup: Markup, kind: BlockKind, source: String?, style: ResolvedStyle, color: PlatformColor? = nil, math: MathTable,
                        context: RenderContext = RenderContext(), cells: [String: RichText] = [:]) -> BlockContent {
         switch kind {
         case .paragraph, .heading:
-            return .text(ProseBuilder.build(markup, style: style, color: color))
+            return .text(ProseBuilder.build(markup, style: style, color: color, math: math))
         case .unorderedList, .orderedList:
-            return ProseBuilder.content(markup, style: style, color: color, context: context)
+            return ProseBuilder.content(markup, style: style, color: color, math: math, context: context)
+        case .displayMath:
+            return .math(displayFormulas(markup, style: style, color: color ?? style.text, math: math))
         case .blockQuote:
             return .quote(markup.children.enumerated().map { index, child in
-                let kind = BlockKind(child)
-                let content = render(child, kind: kind, source: nil, style: style, color: style.quoteText, context: context)
+                let kind = BlockKind(child, math: math)
+                let content = render(child, kind: kind, source: nil, style: style, color: style.quoteText, math: math, context: context)
                 return QuotedBlock(id: index, kind: kind, content: content)
             })
         case .thematicBreak:
             return .rule
         case .codeBlock:
-            guard let code = markup as? CodeBlock else { return .source(ProseBuilder.source(markup.format(), style: style)) }
+            guard let code = markup as? CodeBlock else { return .source(ProseBuilder.source(sourceText(markup, source: source, math: math), style: style)) }
             return .code(CodeBuilder.build(code, highlighted: context.highlights(code, rootSource: source), style: style))
         case .table:
-            guard let table = markup as? Table else { return .source(ProseBuilder.source(markup.format(), style: style)) }
-            return .table(TableBuilder.build(table, style: style, color: color, reusing: cells))
+            guard let table = markup as? Table else { return .source(ProseBuilder.source(sourceText(markup, source: source, math: math), style: style)) }
+            return .table(TableBuilder.build(table, style: style, color: color, math: math, reusing: cells))
         case .html, .other:
-            return .source(ProseBuilder.source(sourceText(markup, source: source), style: style))
+            return .source(ProseBuilder.source(sourceText(markup, source: source, math: math), style: style))
         }
     }
 
     /// Everything `render` reads from a block besides the style: its source text where it draws that, else its tree.
-    static func inputs(_ markup: Markup, kind: BlockKind, source: String?, context: RenderContext) -> String {
+    static func inputs(_ markup: Markup, kind: BlockKind, source: String?, math: MathTable, context: RenderContext) -> String {
         switch kind {
         case .html, .other:
-            return sourceText(markup, source: source)
+            return sourceText(markup, source: source, math: math)
         default:
-            var inputs = RenderInputs(context: context, rootSource: source)
+            var inputs = RenderInputs(math: math, context: context, rootSource: source)
             inputs.visit(markup)
             return inputs.written
         }
     }
 
-    private static func sourceText(_ markup: Markup, source: String?) -> String {
-        (source ?? (markup as? HTMLBlock)?.rawHTML ?? markup.format()).trimmingCharacters(in: .newlines)
+    private static func displayFormulas(_ markup: Markup, style: ResolvedStyle, color: PlatformColor, math: MathTable) -> [DisplayFormula] {
+        let spans = markup.children.compactMap { $0 as? Text }.flatMap { text in
+            math.segments(text.string).compactMap { segment -> MathSpan? in
+                if case .math(let span) = segment { span } else { nil }
+            }
+        }
+        return spans.enumerated().map { index, span in
+            DisplayFormula(
+                id: index,
+                tex: span.label,
+                rendered: MathRenderer.render(span.tex, fontSize: style.body.size * style.style.mathScale, display: true),
+                fallback: ProseBuilder.source(span.source, style: style),
+                color: color
+            )
+        }
+    }
+
+    private static func sourceText(_ markup: Markup, source: String?, math: MathTable) -> String {
+        (source ?? (markup as? HTMLBlock)?.rawHTML ?? math.restoring(markup.format())).trimmingCharacters(in: .newlines)
     }
 }
 
@@ -118,16 +149,19 @@ enum BlockRenderer {
 /// would render differently never write the same string. A field a renderer starts reading belongs here too.
 struct RenderInputs: MarkupWalker {
     private(set) var written = ""
+    /// Placeholders are written as their formula's source, never their index, so a key names its content.
+    let math: MathTable
     private let context: RenderContext
     private let rootSource: String?
 
-    init(context: RenderContext = RenderContext(), rootSource: String? = nil) {
+    init(math: MathTable, context: RenderContext = RenderContext(), rootSource: String? = nil) {
+        self.math = math
         self.context = context
         self.rootSource = rootSource
     }
 
-    static func of(_ markup: Markup) -> String {
-        var inputs = RenderInputs()
+    static func of(_ markup: Markup, math: MathTable) -> String {
+        var inputs = RenderInputs(math: math)
         inputs.visit(markup)
         return inputs.written
     }
@@ -136,7 +170,17 @@ struct RenderInputs: MarkupWalker {
         node(markup)
     }
 
-    mutating func visitText(_ text: Text) { node(text, text.string) }
+    mutating func visitText(_ text: Text) {
+        written += "Text("
+        for segment in math.segments(text.string) {
+            switch segment {
+            case .text(let run): written += Self.value(String(run))
+            case .math(let span): written += "$" + Self.value(span.source)
+            }
+        }
+        written += ")"
+    }
+
     mutating func visitInlineCode(_ code: InlineCode) { node(code, code.code) }
     mutating func visitInlineHTML(_ html: InlineHTML) { node(html, html.rawHTML) }
     mutating func visitHTMLBlock(_ html: HTMLBlock) { node(html, html.rawHTML) }

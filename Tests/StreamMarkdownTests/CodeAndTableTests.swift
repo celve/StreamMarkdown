@@ -86,7 +86,7 @@ struct CodeAndTableTests {
     // MARK: Code and tables inside lists
 
     @Test func codeInsideAListItemCutsTheListAtTheItemsIndent() throws {
-        let content = BlockRenderer.render(try markup("1. Install:\n\n   ```bash\n   pip install peft\n   ```\n2. Train"), kind: .orderedList, source: nil, style: style)
+        let content = BlockRenderer.render(try markup("1. Install:\n\n   ```bash\n   pip install peft\n   ```\n2. Train"), kind: .orderedList, source: nil, style: style, math: .empty)
         guard case .stack(let items) = content else { Issue.record("not a stack: \(content)"); return }
         #expect(items.map(\.id) == [0, 1, 2])
         guard case .text(let first) = items[0].content, case .code(let code) = items[1].content, case .text(let last) = items[2].content else {
@@ -118,13 +118,13 @@ struct CodeAndTableTests {
     }
 
     @Test func aTableInsideAListItemIsATable() throws {
-        let content = BlockRenderer.render(try markup("- Results:\n\n  | a | b |\n  |---|---|\n  | 1 | 2 |"), kind: .unorderedList, source: nil, style: style)
+        let content = BlockRenderer.render(try markup("- Results:\n\n  | a | b |\n  |---|---|\n  | 1 | 2 |"), kind: .unorderedList, source: nil, style: style, math: .empty)
         guard case .stack(let items) = content, case .table(let table) = items.last?.content else { Issue.record("no table: \(content)"); return }
         #expect(table.rows.map { $0.map(\.text.string.string) } == [["a", "b"], ["1", "2"]])
     }
 
     @Test func aQuoteDrawsItsCodeAsACodeBlock() throws {
-        let content = BlockRenderer.render(try markup("> ```js\n> let x\n> ```"), kind: .blockQuote, source: nil, style: style)
+        let content = BlockRenderer.render(try markup("> ```js\n> let x\n> ```"), kind: .blockQuote, source: nil, style: style, math: .empty)
         guard case .quote(let blocks) = content, case .code(let code) = blocks.first?.content else { Issue.record("no code: \(content)"); return }
         #expect(code.code == "let x")
     }

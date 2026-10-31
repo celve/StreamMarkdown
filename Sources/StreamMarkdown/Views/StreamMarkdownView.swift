@@ -106,10 +106,49 @@ struct BlockContentView: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         case .source(let text):
-            ProseTextView(text: text)
-                .padding(em * 0.75)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(style.sourceBackground, in: .rect(cornerRadius: em * 0.6))
+            SourceView(text: text)
+        case .math(let formulas):
+            VStack(spacing: em * 0.5) {
+                ForEach(formulas) { DisplayMathView(formula: $0) }
+            }
+            .frame(maxWidth: .infinity)
+        }
+    }
+}
+
+/// Text drawn as it is, on a rounded fill.
+struct SourceView: View {
+    let text: RichText
+    @Environment(\.streamMarkdownStyle) private var style
+    @Environment(\.streamMarkdownEm) private var em
+
+    var body: some View {
+        ProseTextView(text: text)
+            .padding(em * 0.75)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(style.sourceBackground, in: .rect(cornerRadius: em * 0.6))
+    }
+}
+
+/// A display formula centred in the column, scrolling sideways when wider; VoiceOver reads its TeX.
+struct DisplayMathView: View {
+    let formula: DisplayFormula
+
+    var body: some View {
+        if let rendered = formula.rendered {
+            let image = Image(uiImage: rendered.image)
+                .renderingMode(.template)
+                .foregroundStyle(Color(uiColor: formula.color))
+            ViewThatFits(in: .horizontal) {
+                image
+                ScrollView(.horizontal) { image }
+                    .scrollIndicators(.hidden)
+            }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(Text(verbatim: formula.tex))
+            .accessibilityIdentifier("math")
+        } else {
+            SourceView(text: formula.fallback)
         }
     }
 }
