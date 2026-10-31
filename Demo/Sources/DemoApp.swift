@@ -71,8 +71,16 @@ struct ReplayScreen: View {
                     .accessibilityIdentifier("copied")
             }
         }
-        .onReceive(NotificationCenter.default.publisher(for: UIPasteboard.changedNotification)) { _ in
-            copied = UIPasteboard.general.string
+        .task {
+            // Polls the change count: the change notification never reached the overlay for the app's own copy.
+            var count = UIPasteboard.general.changeCount
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .milliseconds(300))
+                if UIPasteboard.general.changeCount != count {
+                    count = UIPasteboard.general.changeCount
+                    copied = UIPasteboard.general.string
+                }
+            }
         }
         .environment(\.openURL, OpenURLAction { url in
             opened = url

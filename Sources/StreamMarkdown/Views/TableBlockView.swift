@@ -7,12 +7,13 @@ struct TableBlockView: View {
     @Environment(\.streamMarkdownStyle) private var style
     @Environment(\.streamMarkdownEm) private var em
     @Environment(\.displayScale) private var displayScale
+    @State private var width: CGFloat = 0
 
     var body: some View {
         let hairline = 1 / displayScale
         let shape = RoundedRectangle(cornerRadius: em * 0.5)
         ScrollView(.horizontal) {
-            TableLayout(columns: table.columns, maxColumnWidth: style.tableColumnMaxWidth * em) {
+            TableLayout(columns: table.columns, maxColumnWidth: style.tableColumnMaxWidth * em, fitWidth: width, minColumnWidth: 6 * em) {
                 ForEach(0..<table.rows.count * table.columns, id: \.self) { index in
                     let row = index / table.columns
                     ProseTextView(text: table.rows[row][index % table.columns].text)
@@ -32,14 +33,18 @@ struct TableBlockView: View {
         }
         .scrollBounceBehavior(.basedOnSize, axes: .horizontal)
         .frame(maxWidth: .infinity, alignment: .leading)
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
     }
 }
 
 /// Columns as wide as their widest cell, a body cell wrapping past `maxColumnWidth` and a header cell never; rows as
-/// tall as their tallest cell. Subviews come row by row, header first.
+/// tall as their tallest cell. A table wider than `fitWidth` narrows its widest wrapping columns, none below its
+/// header or `minColumnWidth`, before it scrolls. Subviews come row by row, header first.
 struct TableLayout: Layout {
     let columns: Int
     let maxColumnWidth: CGFloat
+    var fitWidth: CGFloat = 0
+    var minColumnWidth: CGFloat = 0
 
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
         let grid = measure(subviews)
@@ -62,11 +67,23 @@ struct TableLayout: Layout {
     private func measure(_ subviews: Subviews) -> (widths: [CGFloat], heights: [CGFloat]) {
         guard columns > 0 else { return ([], []) }
         var widths = Array(repeating: CGFloat(0), count: columns)
+        var floors = Array(repeating: CGFloat(0), count: columns)
         for (index, subview) in subviews.enumerated() {
-            let natural = subview.sizeThatFits(.unspecified).width
-            widths[index % columns] = max(widths[index % columns], index < columns ? natural : min(natural, maxColumnWidth))
+            let natural = subview.sizeThatFits(.unspecified).width.rounded(.up)
+            let column = index % columns
+            widths[column] = max(widths[column], index < columns ? natural : min(natural, maxColumnWidth))
+            floors[column] = max(floors[column], index < columns ? natural : min(natural, minColumnWidth))
         }
-        widths = widths.map { $0.rounded(.up) }
+        if fitWidth > 0, widths.reduce(0, +) > fitWidth {
+            // The widest columns give way first: find the cap at which the columns, each kept to its floor, fit.
+            var (low, high) = (CGFloat(0), widths.max() ?? 0)
+            for _ in 0..<24 {
+                let cap = (low + high) / 2
+                let total = zip(widths, floors).reduce(0) { $0 + max($1.1, min($1.0, cap)) }
+                if total > fitWidth { high = cap } else { low = cap }
+            }
+            widths = zip(widths, floors).map { max($1, min($0, low)).rounded(.down) }
+        }
         var heights = Array(repeating: CGFloat(0), count: subviews.count / columns)
         for (index, subview) in subviews.enumerated() where index / columns < heights.count {
             let height = subview.sizeThatFits(ProposedViewSize(width: widths[index % columns], height: nil)).height
