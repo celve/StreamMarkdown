@@ -2,9 +2,9 @@
 
 A native Swift renderer for Markdown that arrives a few tokens at a time, as an LLM answer does. It parses with Apple's [swift-markdown](https://github.com/swiftlang/swift-markdown) (cmark-gfm) and draws each root block in its own TextKit 2 view, so only the block being written re-renders.
 
-It is being built for the Ask overlay in Duoxiv, where it replaces MarkdownView.
+It draws the answers in Duoxiv's Ask overlay.
 
-Done:
+What it does:
 
 - streaming parse off the main thread, one view per root block, finished blocks never rebuilt;
 - prose: headings, emphasis, strikethrough, monospaced inline code, links through `openURL`, nested and task lists, quotes, rules, Dynamic Type, selection within one block at a time, heading levels for VoiceOver;
@@ -14,7 +14,20 @@ Done:
 - streaming polish: syntax still being written at the end of the answer is closed early (`**bold`, `` `code``) or held back (`[text](ht`, a half-written table row, a closing fence being typed, an unclosed formula), text is released at a steady pace instead of in the lumps it arrives in, new words fade in over 300 ms and new blocks over 150 ms; under Reduce Motion text shows as it arrives, without fades;
 - a demo app that replays recorded answers and measures frame rate and main-thread time.
 
-Nothing is released yet.
+Known limits:
+
+- an unclosed `$$` or `\[` holds back the rest of the answer until it closes or the stream ends;
+- an unclosed single `~` shows as typed;
+- table cells cannot be selected (links in them open on tap);
+- a fade already running when Reduce Motion turns on finishes its 300 ms.
+
+## Install
+
+Add the package and depend on its `StreamMarkdown` product. Releases are tagged on `main`, and before 1.0 a minor version may change the API, so pin one exactly:
+
+```swift
+.package(url: "https://github.com/celve/StreamMarkdown", exact: "0.1.0"),
+```
 
 ## Use
 
@@ -26,7 +39,7 @@ StreamMarkdownView(answer, isStreaming: isResponding)
     .environment(\.openURL, OpenURLAction { url in … })
 ```
 
-Pass the whole answer so far each time it grows. The view needs iOS 27.1; the parser and builder also build on macOS 27, where the tests run.
+Pass the whole answer so far each time it grows, and set `isStreaming` to false when it ends: the rest then shows at once and is parsed as written. The view needs iOS 27.1; the parser and builder also build on macOS 27, where the tests run. Its reveal asks for up to 120 Hz, which an iPhone grants only to an app whose Info.plist sets `CADisableMinimumFrameDurationOnPhone`.
 
 `StreamMarkdownStyle` holds the tokens: fonts by role as Dynamic Type text styles (a serif body and SF headings by default, as in Duoxiv's reader), spacing in ems of the body font, and colours.
 
