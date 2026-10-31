@@ -24,7 +24,6 @@ struct TableGrid: UIViewRepresentable {
     let fitWidth: CGFloat
     @Environment(\.streamMarkdownStyle) private var style
     @Environment(\.streamMarkdownEm) private var em
-    @Environment(\.streamMarkdownSelection) private var selection
 
     func makeCoordinator() -> TextViewActions { TextViewActions() }
 
@@ -34,7 +33,6 @@ struct TableGrid: UIViewRepresentable {
 
     func updateUIView(_ view: TableGridView, context: Context) {
         context.coordinator.openURL = context.environment.openURL
-        context.coordinator.selection = selection
         view.show(table, metrics: TableGridView.Metrics(style: style, em: em))
     }
 
@@ -43,17 +41,17 @@ struct TableGrid: UIViewRepresentable {
     }
 }
 
-/// Cells in text views on a grid: columns as wide as their widest cell, a body cell wrapping past the style's column
-/// width and a header cell never, rows as tall as their tallest cell. A table wider than the width it is given that
-/// would fit with its widest wrapping columns narrowed, none below its header or six ems, is narrowed; one that would
-/// not keeps its widths and scrolls.
+/// Cells in labels on a grid: columns as wide as their widest cell, a body cell wrapping past the style's column width
+/// and a header cell never, rows as tall as their tallest cell. A table wider than the width it is given that would fit
+/// with its widest wrapping columns narrowed, none below its header or six ems, is narrowed; one that would not keeps
+/// its widths and scrolls. Labels rather than text views, since creating a text view per cell cost the stream about
+/// 25 ms/s of main thread; a tap on a link goes to `openURL`, and the cells' text cannot be selected.
 final class TableGridView: UIView {
     struct Metrics: Equatable {
         var padding: UIEdgeInsets
         var maxColumnWidth: CGFloat
         var minColumnWidth: CGFloat
         var cornerRadius: CGFloat
-        var linkColor: UIColor
         var headerBackground: UIColor
         var border: UIColor
 
@@ -62,7 +60,6 @@ final class TableGridView: UIView {
             maxColumnWidth = style.tableColumnMaxWidth * em
             minColumnWidth = 6 * em
             cornerRadius = em * 0.5
-            linkColor = UIColor(style.linkColor)
             headerBackground = UIColor(style.tableHeaderBackground)
             border = UIColor(style.tableBorderColor)
         }
@@ -76,7 +73,7 @@ final class TableGridView: UIView {
     }
 
     private struct Cell {
-        let view: UITextView
+        let view: UILabel
         var text: RichText?
         /// Its text's widest line, and its height at each width it was given, padding excluded.
         var natural: CGFloat?
@@ -98,6 +95,9 @@ final class TableGridView: UIView {
         super.init(frame: .zero)
         layer.masksToBounds = true
         addSubview(header)
+        let tap = UITapGestureRecognizer(target: self, action: #selector(tapped))
+        tap.cancelsTouchesInView = false
+        addGestureRecognizer(tap)
         registerForTraitChanges([UITraitUserInterfaceStyle.self]) { (view: TableGridView, _) in view.updateBorder() }
     }
 
@@ -110,17 +110,14 @@ final class TableGridView: UIView {
             layer.cornerRadius = metrics.cornerRadius
             header.backgroundColor = metrics.headerBackground
             updateBorder()
-            for index in cells.indices {
-                cells[index].view.linkTextAttributes = [.foregroundColor: metrics.linkColor]
-                (cells[index].natural, cells[index].heights) = (nil, [:])
-            }
+            for index in cells.indices { (cells[index].natural, cells[index].heights) = (nil, [:]) }
             grid = nil
         }
         let texts = table.rows.flatMap { $0.map(\.text) }
         if columns != table.columns { (columns, grid) = (table.columns, nil) }
         while cells.count < texts.count {
-            let view = UITextView.answerText(delegate: actions)
-            view.linkTextAttributes = [.foregroundColor: metrics.linkColor]
+            let view = UILabel()
+            view.numberOfLines = 0
             addSubview(view)
             cells.append(Cell(view: view))
         }
@@ -131,6 +128,7 @@ final class TableGridView: UIView {
         for (index, text) in texts.enumerated() where cells[index].text !== text {
             let began = ContinuousClock.now
             cells[index].view.attributedText = text.string
+            describe(cells[index].view, text.string)
             StreamMarkdownDiagnostics.textUpdateMs += (ContinuousClock.now - began).milliseconds
             StreamMarkdownDiagnostics.textViewUpdates += 1
             cells[index] = Cell(view: cells[index].view, text: text)
@@ -161,7 +159,9 @@ final class TableGridView: UIView {
         for (row, height) in grid.heights.enumerated() {
             var x: CGFloat = 0
             for (column, width) in grid.widths.enumerated() {
-                let frame = CGRect(x: x, y: y, width: width, height: height).inset(by: metrics.padding)
+                // As tall as its own text, since a label centres its text in a taller frame.
+                var frame = CGRect(x: x, y: y, width: width, height: height).inset(by: metrics.padding)
+                frame.size.height = textHeight(row * columns + column, width: frame.width)
                 let view = cells[row * columns + column].view
                 if view.frame != frame { view.frame = frame }
                 x += width
@@ -171,6 +171,28 @@ final class TableGridView: UIView {
         }
         header.frame = CGRect(x: 0, y: 0, width: bounds.width, height: grid.heights.first ?? 0)
         layer.borderWidth = hairline
+    }
+
+    @objc private func tapped(_ tap: UITapGestureRecognizer) {
+        let point = tap.location(in: self)
+        guard let cell = cells.first(where: { $0.view.frame.contains(point) }), let url = cell.view.attributedText?.link(at: convert(point, to: cell.view), within: cell.view.bounds.size) else { return }
+        actions.openURL?(url)
+    }
+
+    /// What VoiceOver reads for a cell: formulas as their TeX, and an action to open each link.
+    private func describe(_ label: UILabel, _ text: NSAttributedString) {
+        label.accessibilityLabel = text.spokenMath ?? text.string
+        var links: [UIAccessibilityCustomAction] = []
+        text.enumerateAttribute(.link, in: NSRange(location: 0, length: text.length)) { value, range, _ in
+            guard let url = value as? URL else { return }
+            let name = (text.string as NSString).substring(with: range)
+            links.append(UIAccessibilityCustomAction(name: "Open \(name)") { [weak self] _ in
+                self?.actions.openURL?(url)
+                return true
+            })
+        }
+        label.accessibilityCustomActions = links
+        label.accessibilityTraits = links.isEmpty ? .staticText : [.staticText, .link]
     }
 
     private func updateBorder() {
@@ -211,7 +233,8 @@ final class TableGridView: UIView {
 
     private func naturalWidth(_ index: Int) -> CGFloat {
         if let natural = cells[index].natural { return natural }
-        let natural = measure(index, width: .greatestFiniteMagnitude).width
+        // A point to spare: a label can wrap at exactly the width its own sizeThatFits gave.
+        let natural = measure(index, width: .greatestFiniteMagnitude).width + 1
         cells[index].natural = natural
         return natural
     }

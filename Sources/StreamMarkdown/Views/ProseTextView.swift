@@ -148,20 +148,7 @@ final class ProseUITextView: UITextView {
         }
     }
     override var accessibilityValue: String? {
-        get {
-            let text = attributedText ?? NSAttributedString()
-            var spoken = ""
-            var hasMath = false
-            text.enumerateAttribute(.attachment, in: NSRange(location: 0, length: text.length)) { value, range, _ in
-                if let math = value as? MathAttachment {
-                    spoken += math.tex
-                    hasMath = true
-                } else {
-                    spoken += (text.string as NSString).substring(with: range)
-                }
-            }
-            return hasMath ? spoken : super.accessibilityValue
-        }
+        get { attributedText?.spokenMath ?? super.accessibilityValue }
         set { super.accessibilityValue = newValue }
     }
 }
@@ -180,6 +167,37 @@ final class SelectionOwner {
     func claim(_ view: UITextView) {
         if let holder, holder !== view { holder.selectedTextRange = nil }
         holder = view
+    }
+}
+extension NSAttributedString {
+    /// The text with each formula read as its TeX, or nil when it holds none.
+    var spokenMath: String? {
+        var spoken = ""
+        var hasMath = false
+        enumerateAttribute(.attachment, in: NSRange(location: 0, length: length)) { value, range, _ in
+            if let math = value as? MathAttachment {
+                spoken += math.tex
+                hasMath = true
+            } else {
+                spoken += (string as NSString).substring(with: range)
+            }
+        }
+        return hasMath ? spoken : nil
+    }
+
+    /// The link under a point of the text laid out at `size`, as a label lays it out, if the point is on its text.
+    func link(at point: CGPoint, within size: CGSize) -> URL? {
+        let storage = NSTextStorage(attributedString: self)
+        let layout = NSLayoutManager()
+        let container = NSTextContainer(size: size)
+        container.lineFragmentPadding = 0
+        layout.addTextContainer(container)
+        storage.addLayoutManager(layout)
+        var fraction: CGFloat = 0
+        let glyph = layout.glyphIndex(for: point, in: container, fractionOfDistanceThroughGlyph: &fraction)
+        guard glyph < layout.numberOfGlyphs,
+              layout.boundingRect(forGlyphRange: NSRange(location: glyph, length: 1), in: container).insetBy(dx: -6, dy: -6).contains(point) else { return nil }
+        return attribute(.link, at: layout.characterIndexForGlyph(at: glyph), effectiveRange: nil) as? URL
     }
 }
 #endif

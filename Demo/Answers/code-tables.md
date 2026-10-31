@@ -45,6 +45,7 @@ Long cells wrap at the column's width instead of stretching the table:
 |---|---|
 | Rank `r` | Small ranks (1 to 8) already match full fine-tuning on most GLUE tasks, because the update has a low intrinsic rank. |
 | Which matrices | Adapting *both* `W_q` and `W_v` beats putting the same budget into `W_q` alone. |
+| Scale | The update is multiplied by $\alpha / r$, so changing $r$ needs no new learning rate. |
 | ~~Dropout~~ | Barely matters at these ranks. |
 
 Steps in a list keep their code blocks:

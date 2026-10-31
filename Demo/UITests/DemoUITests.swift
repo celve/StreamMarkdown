@@ -126,6 +126,7 @@ final class DemoUITests: XCTestCase {
 }
 
 extension XCTestCase {
+    @MainActor
     func shoot(_ name: String) {
         let shot = XCUIScreen.main.screenshot()
         let attachment = XCTAttachment(screenshot: shot)

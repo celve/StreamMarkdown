@@ -1,7 +1,8 @@
 import XCTest
 
 /// Code blocks and tables on the simulator: Copy reaches the pasteboard, long code and wide tables scroll sideways by
-/// touch drag while a vertical drag on them still scrolls the answer, and table headers stay on one line.
+/// touch drag while a vertical drag on them still scrolls the answer, table headers stay on one line, and a link in a
+/// cell reaches `openURL`.
 @MainActor
 final class CodeTableUITests: XCTestCase {
     private var app: XCUIApplication!
@@ -47,27 +48,34 @@ final class CodeTableUITests: XCTestCase {
     }
 
     func testAWideTableScrollsSidewaysAndKeepsItsHeaderOnOneLine() {
-        let header = textView("Trainable parameters"), first = textView("Method")
-        reveal(textView("Prefix tuning"))
+        let header = cell("Trainable parameters"), first = cell("Method")
+        reveal(cell("Prefix tuning"))
         XCTAssertEqual(header.frame.height, first.frame.height, accuracy: 1, "a long header stays on one line")
         XCTAssertGreaterThan(header.frame.width, first.frame.width)
         shoot("table-wide")
         // A scroll view leaves cells outside its bounds out of the accessibility tree.
-        let last = app.textViews.matching(NSPredicate(format: "value == %@", "Paper")).firstMatch
+        let last = app.staticTexts.matching(NSPredicate(format: "label == %@", "Paper")).firstMatch
         XCTAssertFalse(last.exists && last.isHittable, "the last column starts off screen")
         let row = first.frame.minY, start = CGPoint(x: header.frame.midX, y: header.frame.midY + 60)
         for _ in 0..<2 { drag(from: start, by: CGVector(dx: -300, dy: 0)) }
         shoot("table-scrolled")
         XCTAssertTrue(last.waitForExistence(timeout: 3) && last.isHittable, "the last column scrolled into view")
         XCTAssertEqual(last.frame.minY, row, accuracy: 2, "a sideways drag leaves the answer where it was")
+
+        let link = app.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "Hu et al.")).firstMatch
+        XCTAssertTrue(link.waitForExistence(timeout: 3))
+        link.tap()
+        let opened = app.staticTexts["opened-url"]
+        XCTAssertTrue(opened.waitForExistence(timeout: 5), "a link in a cell reaches openURL")
+        XCTAssertEqual(opened.label, "openURL: https://arxiv.org/abs/2106.09685")
     }
 
     func testLongCellsWrapAtTheColumnsWidth() {
-        let wrapped = textView("Small ranks"), short = textView("Rank r")
-        reveal(textView("Barely matters"))
+        let wrapped = cell("Small ranks"), short = cell("Rank r")
+        reveal(cell("Barely matters"))
         XCTAssertGreaterThan(wrapped.frame.height, short.frame.height * 1.8, "a long body cell wraps")
         XCTAssertLessThanOrEqual(wrapped.frame.maxX, answer.frame.maxX, "a table of wrapped cells fits the answer's width")
-        XCTAssertEqual(textView("Which matrices").frame.height, short.frame.height, accuracy: 1, "the widest column gives way, not the short one")
+        XCTAssertEqual(cell("Which matrices").frame.height, short.frame.height, accuracy: 1, "the widest column gives way, not the short one")
         shoot("table-wrapped")
     }
 
@@ -102,6 +110,13 @@ final class CodeTableUITests: XCTestCase {
     private func textView(_ prefix: String) -> XCUIElement {
         let view = app.textViews.matching(NSPredicate(format: "value BEGINSWITH %@", prefix)).firstMatch
         XCTAssertTrue(view.waitForExistence(timeout: 5), "no text view starting \(prefix)")
+        return view
+    }
+
+    /// A table cell, drawn as a label.
+    private func cell(_ prefix: String) -> XCUIElement {
+        let view = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", prefix)).firstMatch
+        XCTAssertTrue(view.waitForExistence(timeout: 5), "no cell starting \(prefix)")
         return view
     }
 
