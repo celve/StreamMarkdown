@@ -72,6 +72,17 @@ struct MathRenderingTests {
         #expect(attachment.bounds.height > inline.size.height, "display style, larger than the same fraction inline")
     }
 
+    @Test func displayFormulasInProseKeepTheirSizeAndScrollWhereInlineOnesShrink() throws {
+        let list = build("- item\n\n  $$\n  x^2\n  $$\n\n  and $y$")
+        let attachments = attachments(in: list)
+        #expect(attachments.map(\.isDisplay) == [true, false])
+        #expect(attachments[0].color == style.text, "the scrolling view is tinted like the text")
+        let natural = CGRect(x: 0, y: -8, width: 400, height: 40)
+        #expect(MathAttachment.bounds(natural, display: true, within: 300) == CGRect(x: 0, y: -8, width: 300, height: 40))
+        #expect(MathAttachment.bounds(natural, display: false, within: 200) == CGRect(x: 0, y: -4, width: 200, height: 20))
+        #expect(MathAttachment.bounds(natural, display: true, within: 500) == natural)
+    }
+
     @Test func aRootDisplayFormulaIsAMathBlock() throws {
         let block = try #require(BlockParser.parse("$$\n\\int_0^1 x\\,dx\n$$").first)
         #expect(block.kind == .displayMath)
@@ -115,6 +126,14 @@ struct MathRenderingTests {
         }
         let texts = children.compactMap { child -> String? in if case .source(let text) = child.content { text.string.string } else { nil } }
         #expect(texts.contains { $0.contains("$a$") && $0.contains("|") }, "\(texts)")
+    }
+
+    private func attachments(in text: NSAttributedString) -> [MathAttachment] {
+        var found: [MathAttachment] = []
+        text.enumerateAttribute(.attachment, in: NSRange(location: 0, length: text.length)) { value, _, _ in
+            if let math = value as? MathAttachment { found.append(math) }
+        }
+        return found
     }
 
     private func build(_ markdown: String) -> NSAttributedString {

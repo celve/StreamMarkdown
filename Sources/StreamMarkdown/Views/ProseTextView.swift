@@ -11,7 +11,7 @@ struct ProseTextView: UIViewRepresentable {
     func makeCoordinator() -> Coordinator { Coordinator() }
 
     func makeUIView(context: Context) -> UITextView {
-        let view = UITextView(usingTextLayoutManager: true)
+        let view = ProseUITextView(usingTextLayoutManager: true)
         view.isEditable = false
         view.isSelectable = true
         view.isScrollEnabled = false
@@ -75,6 +75,27 @@ struct ProseTextView: UIViewRepresentable {
         func textViewDidChangeSelection(_ textView: UITextView) {
             if textView.selectedRange.length > 0 { selection?.claim(textView) }
         }
+    }
+}
+
+/// A block's text view, read aloud with each formula as its TeX where UIKit would read the attachment character.
+final class ProseUITextView: UITextView {
+    override var accessibilityValue: String? {
+        get {
+            let text = attributedText ?? NSAttributedString()
+            var spoken = ""
+            var hasMath = false
+            text.enumerateAttribute(.attachment, in: NSRange(location: 0, length: text.length)) { value, range, _ in
+                if let math = value as? MathAttachment {
+                    spoken += math.tex
+                    hasMath = true
+                } else {
+                    spoken += (text.string as NSString).substring(with: range)
+                }
+            }
+            return hasMath ? spoken : super.accessibilityValue
+        }
+        set { super.accessibilityValue = newValue }
     }
 }
 

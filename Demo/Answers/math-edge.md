@@ -51,6 +51,11 @@ Commands it lacks are rewritten: $\dfrac{a}{b}$, $\operatorname*{arg\,max}_x f(x
 > $$
 
 - [x] A task with $x^2$
+- A wide formula inside a list item scrolls sideways:
+
+  $$
+  \mathcal{L}_{\text{total}} = \mathcal{L}_{\text{CE}} + \lambda_1 \lVert \theta \rVert_2^2 + \lambda_2 \sum_{l=1}^{L} \lVert W_l \rVert_F^2 + \lambda_3 \sum_{i=1}^{n} \mathrm{KL}\left(p_i \,\|\, q_i\right)
+  $$
 - [See $\alpha$](https://en.wikipedia.org/wiki/Alpha) links still open.
 
 | Symbol | Meaning |

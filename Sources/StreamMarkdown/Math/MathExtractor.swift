@@ -446,6 +446,10 @@ private struct AllowedRanges: MarkupWalker {
                 merged.append(root)
             }
         }
+        // cmark ends the last block before the answer's closing line breaks; a formula still open runs through them.
+        if let last = merged.last, bytes[last.upperBound...].allSatisfy(\.isSpace) {
+            merged[merged.count - 1] = last.lowerBound..<bytes.count
+        }
         let excluded = excluded.sorted { $0.lowerBound < $1.lowerBound }
         return merged.flatMap { range -> [Range<Int>] in
             var pieces: [Range<Int>] = []

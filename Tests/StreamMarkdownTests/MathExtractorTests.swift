@@ -228,6 +228,21 @@ struct MathExtractorTests {
         #expect(MathExtractor.unfinishedMath(in: "$a$ and $$\nb\n\nc") == .init(delimiter: .doubleDollar, start: 8))
     }
 
+    @Test func aTailEndingInLineBreaksIsStillInsideItsFormula() {
+        #expect(MathExtractor.unfinishedMath(in: "$$\n") == .init(delimiter: .doubleDollar, start: 0))
+        #expect(MathExtractor.unfinishedMath(in: "$$\nx\n") == .init(delimiter: .doubleDollar, start: 0))
+        #expect(MathExtractor.unfinishedMath(in: "$$\nx\n\n") == .init(delimiter: .doubleDollar, start: 0))
+        #expect(MathExtractor.unfinishedMath(in: "\\[\n") == .init(delimiter: .bracket, start: 0))
+        #expect(MathExtractor.unfinishedMath(in: "\\[\nx\n") == .init(delimiter: .bracket, start: 0))
+        #expect(MathExtractor.unfinishedMath(in: "\\(x\n") == .init(delimiter: .parenthesis, start: 0))
+        #expect(MathExtractor.unfinishedMath(in: "> $$\n> x\n") == .init(delimiter: .doubleDollar, start: 2))
+        #expect(MathExtractor.unfinishedMath(in: "- $$\n  x\n") == .init(delimiter: .doubleDollar, start: 2))
+        #expect(MathExtractor.unfinishedMath(in: "Text\r\n$$\r\nx\r\n") == .init(delimiter: .doubleDollar, start: 6))
+        #expect(MathExtractor.unfinishedMath(in: "\\(x\n\n") == nil, "an inline formula ends at a blank line")
+        #expect(MathExtractor.unfinishedMath(in: "```\n$$\nx\n") == nil)
+        #expect(MathExtractor.unfinishedMath(in: "$x\n") == nil)
+    }
+
     @Test func reportsNothingWhenTheTailIsNotInAFormula() {
         for text in ["$a$ done", "```\n$$\nx", "$$\nx\n$$", "\\(a\n\nb", "$a\nb", "costs $ 5", "See \\[1", "Plain text"] {
             #expect(MathExtractor.unfinishedMath(in: text) == nil, "\(text)")

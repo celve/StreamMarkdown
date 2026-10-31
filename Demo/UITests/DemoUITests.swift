@@ -82,11 +82,28 @@ final class DemoUITests: XCTestCase {
         let loss = app.descendants(matching: .any).matching(NSPredicate(format: "identifier == 'math' AND label BEGINSWITH '\\\\mathcal{L}'")).firstMatch
         for _ in 0..<6 where !loss.exists || !loss.isHittable { app.swipeUp(velocity: .slow) }
         XCTAssertTrue(loss.waitForExistence(timeout: 5))
+        assertScrollsSideways(loss, shot: "math-wide")
+    }
+
+    func testWideDisplayMathInAListScrollsInsideItsLine() {
+        relaunch(answer: "math-edge")
+        let total = app.descendants(matching: .any).matching(NSPredicate(format: "identifier == 'math' AND label BEGINSWITH '\\\\mathcal{L}_'")).firstMatch
+        for _ in 0..<8 where !total.exists || !total.isHittable { app.swipeUp(velocity: .slow) }
+        XCTAssertTrue(total.waitForExistence(timeout: 5), "the list's display formula is an element labelled with its TeX")
+        assertScrollsSideways(total, shot: "math-list-wide")
+    }
+
+    /// The formula's view fits the window, and a swipe across it shows a different part of the formula.
+    private func assertScrollsSideways(_ formula: XCUIElement, shot: String, file: StaticString = #filePath, line: UInt = #line) {
         let window = app.windows.firstMatch.frame
-        XCTAssertLessThanOrEqual(loss.frame.maxX, window.maxX + 1, "the formula's view stays within the window: \(loss.frame)")
-        shoot("math-wide")
-        loss.swipeLeft(velocity: .slow)
-        shoot("math-wide-scrolled")
+        XCTAssertLessThanOrEqual(formula.frame.maxX, window.maxX + 1, "the formula's view stays within the window: \(formula.frame)", file: file, line: line)
+        let before = formula.screenshot().pngRepresentation
+        shoot(shot)
+        formula.swipeLeft(velocity: .slow)
+        sleep(1)
+        let after = formula.screenshot().pngRepresentation
+        shoot("\(shot)-scrolled")
+        XCTAssertNotEqual(before, after, "a swipe moved the formula inside its view", file: file, line: line)
     }
 
     func testMathShots() {

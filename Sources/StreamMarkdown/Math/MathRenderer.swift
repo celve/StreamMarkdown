@@ -100,12 +100,18 @@ enum MathRenderer {
     ]
 }
 
-/// An inline formula in a text view: its image on the baseline, shrunk to the line when wider, labelled with its TeX.
+/// A formula in a text view, labelled with its TeX. An inline one sits on the baseline and shrinks to the line when
+/// wider; a display one takes the line's width and scrolls sideways inside it.
 final class MathAttachment: NSTextAttachment {
     private(set) var tex = ""
+    private(set) var isDisplay = false
+    /// The text's colour, which a display formula's view is tinted with.
+    private(set) var color: PlatformColor?
 
-    init(_ math: RenderedMath, tex: String) {
+    init(_ math: RenderedMath, tex: String, display: Bool = false, color: PlatformColor? = nil) {
         self.tex = tex
+        isDisplay = display
+        self.color = color
         super.init(data: nil, ofType: nil)
         image = math.image
         bounds = CGRect(x: 0, y: -math.baseline, width: math.size.width, height: math.size.height)
@@ -116,9 +122,13 @@ final class MathAttachment: NSTextAttachment {
     }
 
     override func attachmentBounds(for attributes: [NSAttributedString.Key: Any], location: any NSTextLocation, textContainer: NSTextContainer?, proposedLineFragment: CGRect, position: CGPoint) -> CGRect {
-        let natural = bounds
-        let available = proposedLineFragment.width
+        Self.bounds(bounds, display: isDisplay, within: proposedLineFragment.width - (isDisplay ? position.x : 0))
+    }
+
+    /// A display formula wider than its line keeps its size, since its view scrolls; an inline one shrinks to fit.
+    static func bounds(_ natural: CGRect, display: Bool, within available: CGFloat) -> CGRect {
         guard available > 0, natural.width > available else { return natural }
+        if display { return CGRect(x: 0, y: natural.minY, width: available, height: natural.height) }
         let scale = available / natural.width
         return CGRect(x: 0, y: natural.minY * scale, width: available, height: natural.height * scale)
     }
@@ -135,12 +145,42 @@ final class MathAttachment: NSTextAttachment {
         guard let image, let color = attributes[.foregroundColor] as? UIColor else { return image }
         return image.withTintColor(color, renderingMode: .alwaysOriginal)
     }
+
+    override func viewProvider(for parentView: UIView?, location: any NSTextLocation, textContainer: NSTextContainer?) -> NSTextAttachmentViewProvider? {
+        guard isDisplay else { return nil }
+        return DisplayMathViewProvider(textAttachment: self, parentView: parentView, textLayoutManager: textContainer?.textLayoutManager, location: location)
+    }
     #endif
 
     override func isEqual(_ object: Any?) -> Bool {
         guard let other = object as? MathAttachment else { return false }
-        return other.tex == tex && other.bounds == bounds && other.image === image
+        return other.tex == tex && other.isDisplay == isDisplay && other.color == color && other.bounds == bounds && other.image === image
     }
 
     override var hash: Int { tex.hashValue }
 }
+
+#if canImport(UIKit)
+/// A display formula inside prose: its image in a sideways-scrolling view as wide as the line.
+final class DisplayMathViewProvider: NSTextAttachmentViewProvider {
+    override func loadView() {
+        guard let attachment = textAttachment as? MathAttachment, let image = attachment.image else { return }
+        let imageView = UIImageView(image: image)
+        imageView.tintColor = attachment.color
+        imageView.frame = CGRect(origin: .zero, size: image.size)
+        let scroll = UIScrollView()
+        scroll.addSubview(imageView)
+        scroll.contentSize = image.size
+        scroll.showsHorizontalScrollIndicator = false
+        scroll.showsVerticalScrollIndicator = false
+        scroll.isAccessibilityElement = true
+        scroll.accessibilityLabel = attachment.tex
+        scroll.accessibilityIdentifier = "math"
+        view = scroll
+    }
+
+    override func attachmentBounds(for attributes: [NSAttributedString.Key: Any], location: any NSTextLocation, textContainer: NSTextContainer?, proposedLineFragment: CGRect, position: CGPoint) -> CGRect {
+        MathAttachment.bounds(textAttachment?.bounds ?? .zero, display: true, within: proposedLineFragment.width - position.x)
+    }
+}
+#endif

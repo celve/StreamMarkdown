@@ -197,7 +197,7 @@ struct ProseBuilder: MarkupWalker {
     }
 
     /// A formula as an image on the text's baseline, sized from the text around it; one SwiftMath cannot draw shows its
-    /// source as code. A display formula sits on a line of its own.
+    /// source as code. A display formula sits on a line of its own, scrolling sideways when wider than it.
     private mutating func appendMath(_ span: MathSpan) {
         if span.isDisplay, output.length > contentStart, output.mutableString.character(at: output.length - 1) != 0x2028 {
             output.append(NSAttributedString(string: "\u{2028}", attributes: attributes(font: currentFont())))
@@ -207,7 +207,7 @@ struct ProseBuilder: MarkupWalker {
         if let rendered = MathRenderer.render(span.tex, fontSize: size, display: span.isDisplay) {
             lineBreakAfterDisplay()
             var attachment = attributes(font: currentFont())
-            attachment[.attachment] = MathAttachment(rendered, tex: span.label)
+            attachment[.attachment] = MathAttachment(rendered, tex: span.label, display: span.isDisplay, color: attachment[.foregroundColor] as? PlatformColor)
             output.append(NSAttributedString(string: "\u{FFFC}", attributes: attachment))
         } else {
             appendCode(span.source)
