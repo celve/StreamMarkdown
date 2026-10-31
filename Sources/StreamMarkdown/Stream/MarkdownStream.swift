@@ -41,7 +41,7 @@ enum MarkdownCompiler {
             if let old = reusable[key] {
                 (content, blockRevision) = (old.content, old.revision)
             } else {
-                content = BlockRenderer.render(parsed.markup, kind: parsed.kind, source: parsed.source, style: style)
+                content = BlockRenderer.render(parsed.markup, kind: parsed.kind, source: parsed.source, style: style, math: parsed.math)
                 blockRevision = revision
                 revision += 1
                 built += 1

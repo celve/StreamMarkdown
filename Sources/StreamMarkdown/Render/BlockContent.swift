@@ -2,7 +2,7 @@ import Foundation
 import Markdown
 
 /// What a block draws as. A piece that renders another kind natively (math, code, tables) adds a case here, a branch in
-/// ``BlockRenderer/render(_:kind:source:style:)``, and a view for it in `BlockView`.
+/// ``BlockRenderer/render(_:kind:source:style:color:math:)``, and a view for it in `BlockView`.
 enum BlockContent: Sendable {
     /// Prose in one text view: a paragraph, a heading or a whole list.
     case text(RichText)
@@ -45,7 +45,7 @@ final class RichText: @unchecked Sendable {
 enum BlockRenderer {
     /// `source` is the block's text in the answer, or nil inside a quote, where the quote's markers prefix every line.
     /// `math` holds the formulas the markup's text names by placeholder.
-    static func render(_ markup: Markup, kind: BlockKind, source: String?, style: ResolvedStyle, color: PlatformColor? = nil, math: MathTable = .empty) -> BlockContent {
+    static func render(_ markup: Markup, kind: BlockKind, source: String?, style: ResolvedStyle, color: PlatformColor? = nil, math: MathTable) -> BlockContent {
         switch kind {
         case .paragraph, .heading, .unorderedList, .orderedList:
             return .text(ProseBuilder.build(markup, style: style, color: color, math: math))
@@ -64,7 +64,7 @@ enum BlockRenderer {
     }
 
     /// Everything `render` reads from a block besides the style: its source text where it draws that, else its tree.
-    static func inputs(_ markup: Markup, kind: BlockKind, source: String?, math: MathTable = .empty) -> String {
+    static func inputs(_ markup: Markup, kind: BlockKind, source: String?, math: MathTable) -> String {
         switch kind {
         case .table, .html, .other:
             return sourceText(markup, kind: kind, source: source, math: math)
@@ -105,7 +105,7 @@ struct RenderInputs: MarkupWalker {
     /// Placeholders are written as their formula's source, never their index, so a key names its content.
     let math: MathTable
 
-    init(math: MathTable = .empty) {
+    init(math: MathTable) {
         self.math = math
     }
 

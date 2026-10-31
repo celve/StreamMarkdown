@@ -30,6 +30,9 @@ enum MathRenderer {
         init(_ math: RenderedMath?) { self.math = math }
     }
 
+    /// SwiftMath's typesetter races on its shared tables when two threads typeset at once (ThreadSanitizer, 1.7.3).
+    private static let typesetting = NSLock()
+
     nonisolated(unsafe) private static let cache: NSCache<NSString, Entry> = {
         let cache = NSCache<NSString, Entry>()
         cache.countLimit = 2000
@@ -48,7 +51,7 @@ enum MathRenderer {
 
     private static func typeset(_ tex: String, fontSize: CGFloat, display: Bool) -> RenderedMath? {
         var image = MathImage(latex: tex, fontSize: fontSize, textColor: .black, labelMode: display ? .display : .text, textAlignment: .left)
-        let (error, drawn, layout) = image.asImage()
+        let (error, drawn, layout) = typesetting.withLock { image.asImage() }
         guard error == nil, let drawn, let layout, drawn.size.width > 0, drawn.size.height > 0 else { return nil }
         // MathImage centres a formula shorter than half the font size, and rounds the image up to whole points.
         let height = max(layout.ascent + layout.descent, fontSize / 2)

@@ -107,6 +107,19 @@ struct MarkdownStreamTests {
         }
     }
 
+    @Test func publishedBlocksDrawTheirFormulas() async throws {
+        let stream = MarkdownStream()
+        stream.update(text: "Rank $r$ here.\n\n$$\nx^2\n$$")
+        await stream.settled()
+        #expect(stream.blocks.map(\.kind) == [.paragraph, .displayMath])
+        let paragraph = try text(stream.blocks[0])
+        #expect(paragraph.string == "Rank \u{FFFC} here.")
+        #expect((paragraph.attribute(.attachment, at: 5, effectiveRange: nil) as? MathAttachment)?.tex == "r")
+        guard case .math(let formulas) = stream.blocks[1].content else { throw Failure.notText }
+        #expect(formulas.map(\.tex) == ["x^2"])
+        #expect(formulas.allSatisfy { $0.rendered != nil })
+    }
+
     @Test func aMathAnswerStreamedInSmallStepsEndsAsItParsesWhole() async throws {
         let stream = MarkdownStream()
         let text = MathExtractorTests.lora

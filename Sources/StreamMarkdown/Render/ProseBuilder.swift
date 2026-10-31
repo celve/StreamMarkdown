@@ -52,7 +52,7 @@ struct ProseBuilder: MarkupWalker {
         blockFont = style.body
     }
 
-    static func build(_ markup: Markup, style: ResolvedStyle, color: PlatformColor? = nil, math: MathTable = .empty) -> RichText {
+    static func build(_ markup: Markup, style: ResolvedStyle, color: PlatformColor? = nil, math: MathTable) -> RichText {
         var builder = ProseBuilder(style: style, color: color, math: math)
         builder.visit(markup)
         return RichText(builder.output, headingLevel: (markup as? Heading)?.level)
