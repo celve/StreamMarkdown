@@ -163,20 +163,24 @@ final class MathAttachment: NSTextAttachment {
 #if canImport(UIKit)
 /// A display formula inside prose: its image in a sideways-scrolling view as wide as the line.
 final class DisplayMathViewProvider: NSTextAttachmentViewProvider {
+    /// TextKit loads attachment views on the main thread, though the method is not marked so.
     override func loadView() {
-        guard let attachment = textAttachment as? MathAttachment, let image = attachment.image else { return }
-        let imageView = UIImageView(image: image)
-        imageView.tintColor = attachment.color
-        imageView.frame = CGRect(origin: .zero, size: image.size)
-        let scroll = UIScrollView()
-        scroll.addSubview(imageView)
-        scroll.contentSize = image.size
-        scroll.showsHorizontalScrollIndicator = false
-        scroll.showsVerticalScrollIndicator = false
-        scroll.isAccessibilityElement = true
-        scroll.accessibilityLabel = attachment.tex
-        scroll.accessibilityIdentifier = "math"
-        view = scroll
+        guard let found = textAttachment as? MathAttachment, let image = found.image else { return }
+        nonisolated(unsafe) let attachment = found, provider = self
+        MainActor.assumeIsolated {
+            let imageView = UIImageView(image: image)
+            imageView.tintColor = attachment.color
+            imageView.frame = CGRect(origin: .zero, size: image.size)
+            let scroll = UIScrollView()
+            scroll.addSubview(imageView)
+            scroll.contentSize = image.size
+            scroll.showsHorizontalScrollIndicator = false
+            scroll.showsVerticalScrollIndicator = false
+            scroll.isAccessibilityElement = true
+            scroll.accessibilityLabel = attachment.tex
+            scroll.accessibilityIdentifier = "math"
+            provider.view = scroll
+        }
     }
 
     override func attachmentBounds(for attributes: [NSAttributedString.Key: Any], location: any NSTextLocation, textContainer: NSTextContainer?, proposedLineFragment: CGRect, position: CGPoint) -> CGRect {
