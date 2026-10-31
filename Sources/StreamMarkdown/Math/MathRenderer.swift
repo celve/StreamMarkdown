@@ -109,9 +109,6 @@ final class MathAttachment: NSTextAttachment {
         super.init(data: nil, ofType: nil)
         image = math.image
         bounds = CGRect(x: 0, y: -math.baseline, width: math.size.width, height: math.size.height)
-        #if canImport(UIKit)
-        accessibilityLabel = tex
-        #endif
     }
 
     required init?(coder: NSCoder) {
@@ -127,6 +124,12 @@ final class MathAttachment: NSTextAttachment {
     }
 
     #if canImport(UIKit)
+    /// Read from the attachment rather than set on it, since the parse job builds attachments off the main actor.
+    override var accessibilityLabel: String? {
+        get { tex }
+        set {}
+    }
+
     /// Tinted with the run's colour as it resolves in the text view's appearance, so a formula follows dark mode.
     override func image(for bounds: CGRect, attributes: [NSAttributedString.Key: Any], location: any NSTextLocation, textContainer: NSTextContainer?) -> UIImage? {
         guard let image, let color = attributes[.foregroundColor] as? UIColor else { return image }
