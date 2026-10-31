@@ -44,6 +44,7 @@ struct ReplayScreen: View {
         return n > 0 ? .tokens(n) : .instant
     }()
     @State private var opened: URL?
+    @State private var copied: String?
     private let showsMeter = UserDefaults.standard.object(forKey: "hud") == nil || UserDefaults.standard.bool(forKey: "hud")
 
     var body: some View {
@@ -60,7 +61,18 @@ struct ReplayScreen: View {
                     .background(.regularMaterial, in: .capsule)
                     .padding()
                     .accessibilityIdentifier("opened-url")
+            } else if let copied {
+                Text("copied: \(copied.prefix { $0 != "\n" })")
+                    .font(.footnote)
+                    .lineLimit(1)
+                    .padding(10)
+                    .background(.regularMaterial, in: .capsule)
+                    .padding()
+                    .accessibilityIdentifier("copied")
             }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIPasteboard.changedNotification)) { _ in
+            copied = UIPasteboard.general.string
         }
         .environment(\.openURL, OpenURLAction { url in
             opened = url
@@ -88,6 +100,7 @@ struct ReplayScreen: View {
 
     private func start() {
         opened = nil
+        copied = nil
         StreamMarkdownDiagnostics.reset()
         replay.play(answer.text, rate: rate)
     }

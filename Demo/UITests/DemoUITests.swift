@@ -65,8 +65,10 @@ final class DemoUITests: XCTestCase {
         app.swipeUp(velocity: .slow)
         shoot("showcase-end")
     }
+}
 
-    private func shoot(_ name: String) {
+extension XCTestCase {
+    func shoot(_ name: String) {
         let shot = XCUIScreen.main.screenshot()
         let attachment = XCTAttachment(screenshot: shot)
         attachment.name = name

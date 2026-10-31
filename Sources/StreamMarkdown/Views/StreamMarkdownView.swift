@@ -24,8 +24,9 @@ public struct StreamMarkdownView: View {
         let environment = RenderEnvironment(style: style, dynamicTypeSize: dynamicTypeSize)
         BlockStack(blocks: stream.blocks, em: stream.style.em)
             .environment(\.streamMarkdownSelection, selection)
-            .onAppear { stream.start(text: text, environment: environment, now: !isStreaming) }
+            .onAppear { stream.start(text: text, environment: environment, isStreaming: isStreaming) }
             .onChange(of: text) { stream.update(text: text) }
+            .onChange(of: isStreaming) { stream.update(isStreaming: isStreaming) }
             .onChange(of: environment) { stream.update(environment: environment) }
     }
 }
@@ -91,6 +92,19 @@ struct BlockContentView: View {
                 .frame(height: 1)
                 .padding(.vertical, em * 0.5)
                 .accessibilityHidden(true)
+        case .code(let code):
+            CodeBlockView(code: code)
+        case .table(let table):
+            TableBlockView(table: table)
+        case .stack(let items):
+            VStack(alignment: .leading, spacing: 0) {
+                ForEach(items) { item in
+                    BlockContentView(content: item.content)
+                        .padding(.top, item.gap)
+                        .padding(.leading, item.indent)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
         case .source(let text):
             ProseTextView(text: text)
                 .padding(em * 0.75)

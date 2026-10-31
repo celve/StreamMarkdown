@@ -19,6 +19,14 @@ struct MarkdownBlock: Identifiable, Equatable, Sendable {
     }
 }
 
+/// What a parse needs to know besides the text and style.
+struct CompileOptions: Hashable, Sendable {
+    /// More of the answer is coming, so its last block may be unfinished.
+    var isStreaming = false
+    /// Code stays plain, for a parse on the main thread; a parse off it highlights.
+    var defersHighlighting = false
+}
+
 /// One parse of the whole answer and the blocks built from it.
 struct Compilation: Sendable {
     let blocks: [MarkdownBlock]
@@ -30,18 +38,22 @@ struct Compilation: Sendable {
 enum MarkdownCompiler {
     /// Parses `text` and renders its root blocks, taking the content of any block whose key is in `previous` (blocks
     /// built with the same style) instead of building it again.
-    static func compile(_ text: String, style: ResolvedStyle, previous: [MarkdownBlock], nextRevision: UInt64) -> Compilation {
+    static func compile(_ text: String, style: ResolvedStyle, previous: [MarkdownBlock], nextRevision: UInt64,
+                        options: CompileOptions = CompileOptions()) -> Compilation {
         var reusable = Dictionary(previous.map { ($0.key, $0) }, uniquingKeysWith: { first, _ in first })
         var revision = nextRevision
         var built = 0
-        let blocks = BlockParser.parse(text).map { parsed -> MarkdownBlock in
-            let key = parsed.key
+        let parsedBlocks = BlockParser.parse(text)
+        let blocks = parsedBlocks.map { parsed -> MarkdownBlock in
+            let context = RenderContext(isOpenTail: options.isStreaming && parsed.index == parsedBlocks.count - 1, defersHighlighting: options.defersHighlighting)
+            let key = parsed.key(context)
             let content: BlockContent
             let blockRevision: UInt64
             if let old = reusable[key] {
                 (content, blockRevision) = (old.content, old.revision)
             } else {
-                content = BlockRenderer.render(parsed.markup, kind: parsed.kind, source: parsed.source, style: style)
+                let cells = parsed.index < previous.count ? previous[parsed.index].content.tableCells : [:]
+                content = BlockRenderer.render(parsed.markup, kind: parsed.kind, source: parsed.source, style: style, context: context, cells: cells)
                 blockRevision = revision
                 revision += 1
                 built += 1
@@ -58,11 +70,12 @@ enum MarkdownCompiler {
 /// flight, and publishes its root blocks. A text that arrives during a parse waits, and only the latest is parsed next.
 @MainActor @Observable
 final class MarkdownStream {
-    typealias Compile = @Sendable (String, ResolvedStyle, [MarkdownBlock], UInt64) -> Compilation
+    typealias Compile = @Sendable (String, ResolvedStyle, [MarkdownBlock], UInt64, CompileOptions) -> Compilation
 
     private(set) var blocks: [MarkdownBlock] = []
     @ObservationIgnored private(set) var text = ""
     @ObservationIgnored private(set) var style: ResolvedStyle
+    @ObservationIgnored private(set) var isStreaming = false
     @ObservationIgnored private(set) var builtCount = 0
     @ObservationIgnored private var blocksStyle: ResolvedStyle?
     @ObservationIgnored private var job: Task<Void, Never>?
@@ -72,22 +85,31 @@ final class MarkdownStream {
     @ObservationIgnored private let compile: Compile
 
     /// Cheap without an environment, since SwiftUI makes one for every `@State` initial value it then throws away.
-    init(environment: RenderEnvironment? = nil, compile: @escaping Compile = MarkdownCompiler.compile) {
+    init(environment: RenderEnvironment? = nil, compile: @escaping Compile = { MarkdownCompiler.compile($0, style: $1, previous: $2, nextRevision: $3, options: $4) }) {
         style = environment.map(ResolvedStyle.init) ?? .standard
         self.compile = compile
     }
 
-    /// Takes the answer and environment a view first appears with; `now` parses on the main thread when no parse is running.
-    func start(text: String, environment: RenderEnvironment, now: Bool) {
-        guard text != self.text || environment != style.environment || blocksStyle == nil else { return }
+    /// Takes the answer and environment a view first appears with. A finished answer is parsed on the main thread when
+    /// no parse is running, so its first layout has its height.
+    func start(text: String, environment: RenderEnvironment, isStreaming: Bool) {
+        guard text != self.text || environment != style.environment || isStreaming != self.isStreaming || blocksStyle == nil else { return }
         self.text = text
+        self.isStreaming = isStreaming
         if environment != style.environment { style = ResolvedStyle(environment) }
-        if now, job == nil { renderNow() } else { schedule() }
+        if !isStreaming, job == nil { renderNow() } else { schedule() }
     }
 
     func update(text: String) {
         guard text != self.text else { return }
         self.text = text
+        schedule()
+    }
+
+    /// An answer that stops streaming closes its last block, which highlights its code.
+    func update(isStreaming: Bool) {
+        guard isStreaming != self.isStreaming else { return }
+        self.isStreaming = isStreaming
         schedule()
     }
 
@@ -97,10 +119,12 @@ final class MarkdownStream {
         schedule()
     }
 
-    /// Parses on the main thread now, for an answer shown whole, so its first layout already has its height.
+    /// Parses on the main thread now, for an answer shown whole, so its first layout already has its height. Code is
+    /// plain in that parse, and highlighted by the parse off the main thread that follows.
     func renderNow() {
         guard job == nil else { return }
-        apply(compile(text, style, reusableBlocks, nextRevision), style: style)
+        apply(compile(text, style, reusableBlocks, nextRevision, CompileOptions(isStreaming: isStreaming, defersHighlighting: true)), style: style)
+        schedule()
     }
 
     /// Returns once no parse is running or waiting.
@@ -117,9 +141,10 @@ final class MarkdownStream {
             return
         }
         let (text, style, previous, revision, compile) = (text, style, reusableBlocks, nextRevision, compile)
+        let options = CompileOptions(isStreaming: isStreaming)
         job = Task.detached(priority: .userInitiated) { [weak self] in
             let began = ContinuousClock.now
-            let compilation = compile(text, style, previous, revision)
+            let compilation = compile(text, style, previous, revision, options)
             let took = ContinuousClock.now - began
             await self?.finish(compilation, style: style, took: took)
         }

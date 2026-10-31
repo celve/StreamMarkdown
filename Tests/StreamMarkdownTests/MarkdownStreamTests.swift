@@ -129,12 +129,14 @@ struct MarkdownStreamTests {
         #expect(stream.style.body.size > ResolvedStyle(RenderEnvironment()).body.size)
     }
 
-    @Test func aFinishedAnswerCanBeLaidOutAtOnce() {
+    @Test func aFinishedAnswerCanBeLaidOutAtOnce() async {
         let probe = Probe()
         let stream = MarkdownStream(compile: probe.compile)
-        stream.start(text: Samples.answer, environment: RenderEnvironment(), now: true)
+        stream.start(text: Samples.answer, environment: RenderEnvironment(), isStreaming: false)
         #expect(stream.blocks.count == BlockParser.parse(Samples.answer).count)
-        #expect(probe.onMain == [true])
+        await stream.settled()
+        #expect(probe.onMain == [true, false], "laid out on the main thread, then parsed again off it to highlight code")
+        #expect(probe.options.map(\.defersHighlighting) == [true, false])
     }
 
     @Test func anUnchangedParseLeavesTheBlocksAlone() async {
@@ -157,43 +159,49 @@ struct MarkdownStreamTests {
 }
 
 /// What a block draws, compared by value.
-private enum Rendered: Equatable {
+enum Rendered: Equatable {
     case text(NSAttributedString), quote([Rendered]), rule, source(NSAttributedString)
+    case code(String?, String, NSAttributedString), table(Int, [[NSAttributedString]]), stack([CGFloat], [CGFloat], [Rendered])
 
     init(_ content: BlockContent) {
         switch content {
         case .text(let text): self = .text(text.string)
         case .quote(let blocks): self = .quote(blocks.map { Rendered($0.content) })
         case .rule: self = .rule
+        case .code(let code): self = .code(code.language, code.code, code.text.string)
+        case .table(let table): self = .table(table.columns, table.rows.map { $0.map(\.text.string) })
+        case .stack(let items): self = .stack(items.map(\.gap), items.map(\.indent), items.map { Rendered($0.content) })
         case .source(let text): self = .source(text.string)
         }
     }
 }
 
 /// Wraps the real compile, recording the thread, the texts parsed and how many ran at once.
-private final class Probe: @unchecked Sendable {
+final class Probe: @unchecked Sendable {
     private let lock = NSLock()
     private let delay: TimeInterval
     private var running = 0
     private(set) var mostAtOnce = 0
     private(set) var onMain: [Bool] = []
     private(set) var texts: [String] = []
+    private(set) var options: [CompileOptions] = []
 
     init(delay: TimeInterval = 0) {
         self.delay = delay
     }
 
     var compile: MarkdownStream.Compile {
-        { [self] text, style, previous, revision in
+        { [self] text, style, previous, revision, options in
             lock.withLock {
                 running += 1
                 mostAtOnce = max(mostAtOnce, running)
                 onMain.append(Thread.isMainThread)
                 texts.append(text)
+                self.options.append(options)
             }
             if delay > 0 { Thread.sleep(forTimeInterval: delay) }
             defer { lock.withLock { running -= 1 } }
-            return MarkdownCompiler.compile(text, style: style, previous: previous, nextRevision: revision)
+            return MarkdownCompiler.compile(text, style: style, previous: previous, nextRevision: revision, options: options)
         }
     }
 }
