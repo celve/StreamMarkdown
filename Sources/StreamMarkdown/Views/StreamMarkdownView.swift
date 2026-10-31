@@ -46,6 +46,18 @@ struct BlockStack: View {
     let stream: MarkdownStream
 
     var body: some View {
+        if !Tuning.slots {
+            let blocks = stream.blocks
+            VStack(alignment: .leading, spacing: 0) {
+                ForEach(blocks) { block in
+                    BlockView(kind: block.kind, revision: block.revision, content: block.content)
+                        .equatable()
+                        .padding(.top, block.id == 0 ? 0 : StreamMarkdownStyle.default.spacing(between: blocks[block.id - 1].kind, and: block.kind) * stream.em)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .environment(\.streamMarkdownEm, stream.em)
+        } else {
         let slots = stream.slots
         VStack(alignment: .leading, spacing: 0) {
             ForEach(slots) { slot in
@@ -54,6 +66,7 @@ struct BlockStack: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .environment(\.streamMarkdownEm, stream.em)
+        }
     }
 }
 
@@ -69,7 +82,7 @@ struct SlotView: View {
             .padding(.top, previous.map { style.spacing(between: $0.kind, and: slot.kind) * em } ?? 0)
             .environment(\.streamMarkdownFadesIn, slot.fadesIn)
         // Text fades in word by word instead.
-        if slot.fadesIn, !slot.content.isText {
+        if Tuning.blockFade, slot.fadesIn, !slot.content.isText {
             block.modifier(FadeIn())
         } else {
             block

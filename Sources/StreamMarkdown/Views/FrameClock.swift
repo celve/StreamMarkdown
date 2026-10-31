@@ -2,8 +2,8 @@
 import QuartzCore
 import UIKit
 
-/// Drives a stream from a display link while it has text to release or a parse to publish, so updates land at the
-/// start of a frame. It asks for up to 120 Hz, which a ProMotion iPhone grants with `CADisableMinimumFrameDurationOnPhone`.
+/// Drives a stream's reveal tick from a display link while it has text to release, so each release lands at the start
+/// of a frame. It asks for up to 120 Hz, which a ProMotion iPhone grants with `CADisableMinimumFrameDurationOnPhone`.
 @MainActor
 final class DisplayLinkClock: FrameClock {
     weak var stream: MarkdownStream?

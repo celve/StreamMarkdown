@@ -24,6 +24,8 @@ struct TableGrid: UIViewRepresentable {
     let fitWidth: CGFloat
     @Environment(\.streamMarkdownStyle) private var style
     @Environment(\.streamMarkdownEm) private var em
+    @Environment(\.streamMarkdownStream) private var stream
+    @Environment(\.streamMarkdownFadesIn) private var fadesIn
 
     func makeCoordinator() -> TextViewActions { TextViewActions() }
 
@@ -33,7 +35,7 @@ struct TableGrid: UIViewRepresentable {
 
     func updateUIView(_ view: TableGridView, context: Context) {
         context.coordinator.openURL = context.environment.openURL
-        view.show(table, metrics: TableGridView.Metrics(style: style, em: em))
+        view.show(table, metrics: TableGridView.Metrics(style: style, em: em), fadesNewRows: fadesIn && stream?.animates == true)
     }
 
     func sizeThatFits(_ proposal: ProposedViewSize, uiView: TableGridView, context: Context) -> CGSize? {
@@ -104,7 +106,8 @@ final class TableGridView: UIView {
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not available") }
 
-    func show(_ table: TableContent, metrics: Metrics) {
+    /// `fadesNewRows`: rows added to a table already shown fade in, as the answer streams.
+    func show(_ table: TableContent, metrics: Metrics, fadesNewRows: Bool = false) {
         if metrics != self.metrics {
             self.metrics = metrics
             layer.cornerRadius = metrics.cornerRadius
@@ -115,11 +118,18 @@ final class TableGridView: UIView {
         }
         let texts = table.rows.flatMap { $0.map(\.text) }
         if columns != table.columns { (columns, grid) = (table.columns, nil) }
+        var added: [UILabel] = []
+        let wasShown = !cells.isEmpty
         while cells.count < texts.count {
             let view = UILabel()
             view.numberOfLines = 0
             addSubview(view)
             cells.append(Cell(view: view))
+            added.append(view)
+        }
+        if fadesNewRows, wasShown, !added.isEmpty {
+            added.forEach { $0.alpha = 0 }
+            UIView.animate(withDuration: 0.15, delay: 0, options: [.curveEaseOut, .allowUserInteraction]) { added.forEach { $0.alpha = 1 } }
         }
         while cells.count > texts.count {
             cells.removeLast().view.removeFromSuperview()

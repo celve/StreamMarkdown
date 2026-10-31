@@ -69,8 +69,7 @@ enum MarkdownCompiler {
 
 /// The streaming parse coordinator: takes the growing answer, parses it off the main thread with at most one parse in
 /// flight, and publishes its root blocks. A text that arrives during a parse waits, and only the latest is parsed next.
-/// With a frame clock attached, a streaming answer goes through a ``RevealPacer`` on the clock's tick, and each parse's
-/// blocks are published at the start of the next frame.
+/// With a frame clock attached, a streaming answer goes through a ``RevealPacer`` ticking on the clock's frames.
 @MainActor @Observable
 final class MarkdownStream {
     typealias Compile = @Sendable (String, ResolvedStyle, [MarkdownBlock], UInt64, CompileOptions) -> Compilation
@@ -92,9 +91,7 @@ final class MarkdownStream {
     /// UTF-8 length of the text shown at once when the view appeared: blocks starting before it do not fade in.
     @ObservationIgnored private var shownAtOnce = 0
     @ObservationIgnored private weak var clock: (any FrameClock)?
-    @ObservationIgnored private var pending: (compilation: Compilation, style: ResolvedStyle)?
-    /// The last parse's blocks, published or pending, which the next parse builds on.
-    @ObservationIgnored private var latest: (blocks: [MarkdownBlock], style: ResolvedStyle)?
+    @ObservationIgnored private var blocksStyle: ResolvedStyle?
     @ObservationIgnored private var job: Task<Void, Never>?
     @ObservationIgnored private var isStale = false
     @ObservationIgnored private var nextRevision: UInt64 = 1
@@ -110,7 +107,7 @@ final class MarkdownStream {
     /// Takes the answer and environment a view first appears with, all of it shown at once. A finished answer is
     /// parsed on the main thread when no parse is running, so its first layout has its height.
     func start(text: String, environment: RenderEnvironment, isStreaming: Bool, reduceMotion: Bool = false, clock: (any FrameClock)? = nil) {
-        guard text != self.text || environment != style.environment || isStreaming != self.isStreaming || latest == nil else { return }
+        guard text != self.text || environment != style.environment || isStreaming != self.isStreaming || blocksStyle == nil else { return }
         self.clock = clock
         self.reduceMotion = reduceMotion
         pacer = RevealPacer(text)
@@ -125,7 +122,7 @@ final class MarkdownStream {
     /// Takes the whole answer so far: parsed now, or released by the pacer on the clock's tick while it streams.
     func receive(_ text: String) {
         pacer.receive(text)
-        guard isStreaming, let clock else { return reveal() }
+        guard Tuning.pace, isStreaming, let clock else { return reveal() }
         if pacer.backlog > 0 { clock.requestFrames() } else { update(text: pacer.text) }
     }
 
@@ -159,39 +156,29 @@ final class MarkdownStream {
         schedule()
     }
 
-    /// Called by the clock at the start of each frame: publishes a finished parse, then takes the pacer's tick.
-    /// Returns whether more frames are wanted.
+    /// Called by the clock at the start of each frame, for the pacer's tick. Returns whether more frames are wanted.
     func frame(at now: Double) -> Bool {
-        if let pending {
-            self.pending = nil
-            apply(pending.compilation, style: pending.style)
-            resumeWaitersIfSettled()
-        }
         if pacer.advance(to: now, paced: animates) { update(text: pacer.revealed) }
-        return pacer.backlog > 0 || job != nil || pending != nil
+        return pacer.backlog > 0
     }
 
     /// Parses on the main thread now, for an answer shown whole, so its first layout already has its height. Code is
     /// plain in that parse, and highlighted by the parse off the main thread that follows.
     func renderNow() {
         guard job == nil else { return }
-        let compilation = compile(text, style, reusableBlocks, nextRevision, CompileOptions(isStreaming: isStreaming, defersHighlighting: true))
-        latest = (compilation.blocks, style)
-        nextRevision = compilation.nextRevision
-        pending = nil
-        apply(compilation, style: style)
+        apply(compile(text, style, reusableBlocks, nextRevision, CompileOptions(isStreaming: isStreaming, defersHighlighting: true)), style: style)
         schedule()
     }
 
     var isParsing: Bool { job != nil }
 
-    /// Returns once no parse is running, waiting or unpublished.
+    /// Returns once no parse is running or waiting.
     func settled() async {
-        guard job != nil || pending != nil else { return }
+        guard job != nil else { return }
         await withCheckedContinuation { waiters.append($0) }
     }
 
-    private var reusableBlocks: [MarkdownBlock] { latest.flatMap { $0.style === style ? $0.blocks : nil } ?? [] }
+    private var reusableBlocks: [MarkdownBlock] { blocksStyle === style ? blocks : [] }
 
     private func reveal() {
         pacer.revealAll()
@@ -216,33 +203,23 @@ final class MarkdownStream {
     private func finish(_ compilation: Compilation, style: ResolvedStyle, took: Duration) {
         job = nil
         StreamMarkdownDiagnostics.compileMs += took.milliseconds
-        latest = (compilation.blocks, style)
-        nextRevision = compilation.nextRevision
-        if isStreaming, let clock {
-            pending = (compilation, style)
-            clock.requestFrames()
-        } else {
-            pending = nil
-            apply(compilation, style: style)
-        }
+        apply(compilation, style: style)
         if isStale {
             isStale = false
             schedule()
+        } else {
+            let waiters = waiters
+            self.waiters = []
+            waiters.forEach { $0.resume() }
         }
-        resumeWaitersIfSettled()
-    }
-
-    private func resumeWaitersIfSettled() {
-        guard job == nil, pending == nil else { return }
-        let waiters = waiters
-        self.waiters = []
-        waiters.forEach { $0.resume() }
     }
 
     private func apply(_ compilation: Compilation, style: ResolvedStyle) {
         let began = ContinuousClock.now
         defer { StreamMarkdownDiagnostics.publishMs += (ContinuousClock.now - began).milliseconds }
+        nextRevision = compilation.nextRevision
         builtCount += compilation.built
+        blocksStyle = style
         StreamMarkdownDiagnostics.parses += 1
         StreamMarkdownDiagnostics.builtBlocks += compilation.built
         if style.em != em { em = style.em }

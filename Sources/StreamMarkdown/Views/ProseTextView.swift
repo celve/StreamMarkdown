@@ -37,7 +37,7 @@ struct ProseTextView: UIViewRepresentable {
         let kept = view.show(text.string, replacing: previous?.string)
         StreamMarkdownDiagnostics.textUpdateMs += (ContinuousClock.now - began).milliseconds
         // A block's first text fades whole only if the block itself arrived while streaming.
-        if fades, stream?.animates == true, previous != nil || fadesIn, kept < text.string.length {
+        if Tuning.wordFade, fades, stream?.animates == true, previous != nil || fadesIn, kept < text.string.length {
             view.fadeIn(NSRange(location: kept, length: text.string.length - kept))
         }
         view.accessibilityTraits = text.headingLevel == nil ? coordinator.baseTraits : coordinator.baseTraits.union(.header)
@@ -107,9 +107,11 @@ final class ProseUITextView: UITextView {
     static let fadeDuration = 0.3
 
     private var formulas: [(attachment: MathAttachment, location: Int, view: UIScrollView)] = []
-    /// Ranges fading in, oldest first, each with when it started.
-    private var fades: [(range: NSRange, start: CFTimeInterval)] = []
-    private var fadeLink: CADisplayLink?
+    /// Ranges fading in, oldest first, each with when it started and its part of the mask.
+    private var fades: [(range: NSRange, start: CFTimeInterval, part: CAShapeLayer)] = []
+    private let fadeMask = CALayer()
+    /// The mask's part over the text before the oldest fading range, which shows as it is.
+    private let settledPart = CAShapeLayer()
 
     override var attributedText: NSAttributedString! {
         didSet { placeFormulaViews() }
@@ -118,6 +120,7 @@ final class ProseUITextView: UITextView {
     override func layoutSubviews() {
         super.layoutSubviews()
         layoutFormulaViews()
+        if !fades.isEmpty { layoutFadeMask() }
     }
 
     override func didMoveToWindow() {
@@ -129,7 +132,7 @@ final class ProseUITextView: UITextView {
     /// included, is replaced in the text storage, so TextKit lays out again only the paragraphs that changed.
     /// Returns how many characters of `previous` start `text` as well, which are not new.
     func show(_ text: NSAttributedString, replacing previous: NSAttributedString?) -> Int {
-        guard let previous, previous.length == textStorage.length else {
+        guard Tuning.tailReplace, let previous, previous.length == textStorage.length else {
             attributedText = text
             return 0
         }
@@ -144,7 +147,7 @@ final class ProseUITextView: UITextView {
                                       with: text.attributedSubstring(from: NSRange(location: same, length: text.length - same)))
         textStorage.endEditing()
         placeFormulaViews()
-        if !fades.isEmpty { drawFades(at: CACurrentMediaTime()) }
+        if !fades.isEmpty { layoutFadeMask() }
         return common
     }
 
@@ -163,77 +166,87 @@ final class ProseUITextView: UITextView {
 
     // MARK: Fading in
 
-    /// Fades `range` in over ``fadeDuration``: from transparent now, before the frame shows it.
+    /// Fades `range` in over ``fadeDuration``. The text draws at full strength under a mask: opaque over the settled
+    /// text, and one part per fading range whose opacity Core Animation ramps, so no frame of a fade redraws text or
+    /// runs on the main thread. Ramps are capped at 60 Hz, where a ProMotion screen would run them at 120.
     func fadeIn(_ range: NSRange) {
-        let now = CACurrentMediaTime()
-        // Older fades give way where the new one starts, so none ends by restoring text that is still fading.
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        // Older fades give way where the new one starts, so no text is under two parts.
         fades = fades.compactMap { fade in
             let end = min(fade.range.upperBound, range.location)
-            return end > fade.range.location ? (NSRange(location: fade.range.location, length: end - fade.range.location), fade.start) : nil
+            guard end > fade.range.location else {
+                fade.part.removeFromSuperlayer()
+                return nil
+            }
+            return (NSRange(location: fade.range.location, length: end - fade.range.location), fade.start, fade.part)
         }
-        fades.append((range, now))
-        drawFades(at: now)
-        guard fadeLink == nil else { return }
-        let link = CADisplayLink(target: DisplayLinkTarget { [weak self] in self?.drawFades(at: $0.targetTimestamp) }, selector: #selector(DisplayLinkTarget.tick(_:)))
-        // Each frame redraws the fading paragraphs, so 60 Hz is enough even where the screen runs at 120.
-        link.preferredFrameRateRange = CAFrameRateRange(minimum: 30, maximum: 60, preferred: 60)
-        link.add(to: .main, forMode: .common)
-        fadeLink = link
+        let part = CAShapeLayer()
+        part.fillColor = UIColor.black.cgColor
+        let ramp = CABasicAnimation(keyPath: "opacity")
+        ramp.fromValue = 0
+        ramp.toValue = 1
+        ramp.duration = Self.fadeDuration
+        ramp.timingFunction = CAMediaTimingFunction(name: .easeOut)
+        ramp.preferredFrameRateRange = CAFrameRateRange(minimum: 30, maximum: 60, preferred: 60)
+        part.add(ramp, forKey: "fade")
+        if fadeMask.sublayers == nil {
+            settledPart.fillColor = UIColor.black.cgColor
+            fadeMask.addSublayer(settledPart)
+        }
+        fadeMask.addSublayer(part)
+        fades.append((range, CACurrentMediaTime(), part))
+        layer.mask = fadeMask
+        layoutFadeMask()
+        CATransaction.commit()
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.fadeDuration + 0.05) { [weak self] in self?.layoutFadeMask() }
     }
 
-    /// Sets each fading run's colours at the ramp's alpha as rendering attributes, then redraws the lines they are on.
-    private func drawFades(at now: CFTimeInterval) {
-        guard let layout = textLayoutManager, let content = layout.textContentManager else { return finishFades() }
-        let length = textStorage.length
-        var dirty = CGRect.null
-        fades = fades.filter { fade in
-            let range = NSIntersectionRange(fade.range, NSRange(location: 0, length: length))
-            guard range.length > 0, let textRange = NSTextRange(range, in: content) else { return false }
-            layout.enumerateTextSegments(in: textRange, type: .standard, options: []) { _, segment, _, _ in
-                dirty = dirty.union(segment)
-                return true
-            }
-            let progress = (now - fade.start) / Self.fadeDuration
-            guard progress < 1 else {
-                layout.removeRenderingAttribute(.foregroundColor, for: textRange)
-                layout.removeRenderingAttribute(.backgroundColor, for: textRange)
-                return false
-            }
-            let alpha = 1 - (1 - max(progress, 0)) * (1 - max(progress, 0))
-            textStorage.enumerateAttributes(in: range) { attributes, run, _ in
-                guard let runRange = NSTextRange(run, in: content) else { return }
-                var rendering: [NSAttributedString.Key: Any] = [:]
-                let color = (attributes[.foregroundColor] as? UIColor ?? .label).resolvedColor(with: traitCollection)
-                rendering[.foregroundColor] = color.withAlphaComponent(color.cgColor.alpha * alpha)
-                if let background = (attributes[.backgroundColor] as? UIColor)?.resolvedColor(with: traitCollection) {
-                    rendering[.backgroundColor] = background.withAlphaComponent(background.cgColor.alpha * alpha)
-                }
-                layout.setRenderingAttributes(rendering, for: runRange)
-            }
+    /// Fits the mask to where the fading ranges are laid out now, since a word that grows can wrap to the next line,
+    /// and drops the parts whose ramp has finished; the mask goes once none is left.
+    private func layoutFadeMask() {
+        let now = CACurrentMediaTime()
+        fades.removeAll { fade in
+            guard now - fade.start >= Self.fadeDuration else { return false }
+            fade.part.removeFromSuperlayer()
             return true
         }
-        if !dirty.isNull { redraw(dirty.offsetBy(dx: textContainerInset.left, dy: textContainerInset.top)) }
-        if fades.isEmpty { finishFades() }
-    }
-
-    /// UITextView does not redraw text whose rendering attributes changed, so the views drawing those lines are told.
-    private func redraw(_ rect: CGRect) {
-        var views = subviews
-        while let view = views.popLast() {
-            let local = convert(rect, to: view).intersection(view.bounds)
-            if !local.isNull, !local.isEmpty { view.setNeedsDisplay(local) }
-            views += view.subviews
+        guard !fades.isEmpty, let layout = textLayoutManager, let content = layout.textContentManager else { return finishFades() }
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        fadeMask.frame = layer.bounds
+        let inset = textContainerInset
+        let length = textStorage.length
+        var oldest: CGRect?
+        for fade in fades {
+            let path = CGMutablePath()
+            let range = NSIntersectionRange(fade.range, NSRange(location: 0, length: length))
+            if range.length > 0, let textRange = NSTextRange(range, in: content) {
+                layout.ensureLayout(for: textRange)
+                layout.enumerateTextSegments(in: textRange, type: .standard, options: []) { _, segment, _, _ in
+                    let line = segment.offsetBy(dx: inset.left, dy: inset.top)
+                    if oldest == nil { oldest = line }
+                    // Glyphs reach a little past their line's box.
+                    path.addRect(line.insetBy(dx: -2, dy: -2))
+                    return true
+                }
+            }
+            fade.part.path = path
         }
+        // Everything above the oldest fading line, and that line up to where the fading starts.
+        let far: CGFloat = 100_000
+        let settled = CGMutablePath()
+        let start = oldest ?? CGRect(x: far, y: far, width: 0, height: 0)
+        settled.addRect(CGRect(x: -far, y: -far, width: 2 * far, height: far + start.minY))
+        settled.addRect(CGRect(x: -far, y: start.minY, width: far + start.minX, height: start.height))
+        settledPart.path = settled
+        CATransaction.commit()
     }
 
     private func finishFades() {
-        if let layout = textLayoutManager, let content = layout.textContentManager, !fades.isEmpty {
-            layout.removeRenderingAttribute(.foregroundColor, for: content.documentRange)
-            layout.removeRenderingAttribute(.backgroundColor, for: content.documentRange)
-        }
+        fades.forEach { $0.part.removeFromSuperlayer() }
         fades = []
-        fadeLink?.invalidate()
-        fadeLink = nil
+        if layer.mask === fadeMask { layer.mask = nil }
     }
 
     func placeFormulaViews() {

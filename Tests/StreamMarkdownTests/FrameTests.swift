@@ -3,10 +3,10 @@ import Observation
 @testable import StreamMarkdown
 import Testing
 
-/// The stream driven by a frame clock, as the view drives it: paced text, blocks published at frame starts, slots.
+/// The stream driven by a frame clock, as the view drives it: paced text, fades decided per block, slots.
 @MainActor
 struct FrameTests {
-    @Test func aStreamingAnswerIsPacedAndPublishedOnlyAtFrameStarts() async throws {
+    @Test func aStreamingAnswerIsReleasedOnTheClocksTicks() async throws {
         let (stream, clock) = Self.streaming()
         let answer = "First paragraph of the answer.\n\nSecond paragraph, which keeps growing for a while longer."
         stream.receive(answer)
@@ -17,17 +17,17 @@ struct FrameTests {
         _ = stream.frame(at: time)
         let first = stream.text
         #expect(!first.isEmpty && first.count < answer.count, "the first tick shows a stretch, not everything")
-        await Self.parsed(stream)
-        #expect(stream.blocks.isEmpty, "a finished parse waits for the next frame")
+        await stream.settled()
+        #expect(stream.blocks.map(\.source).joined() == first.trimmingCharacters(in: .whitespacesAndNewlines))
         time += 1 / 60
         _ = stream.frame(at: time)
-        #expect(stream.blocks.map(\.source).joined() == first.trimmingCharacters(in: .whitespacesAndNewlines))
+        #expect(stream.text == first, "no second tick within 50 ms")
 
         var shown = [first]
         while stream.frame(at: time) || stream.isParsing {
             if stream.text != shown.last { shown.append(stream.text) }
             time += 1 / 60
-            await Self.parsed(stream)
+            await stream.settled()
         }
         #expect(stream.text == answer)
         #expect(shown.count >= 5, "revealed over several ticks: \(shown.count)")
@@ -57,8 +57,7 @@ struct FrameTests {
         #expect(stream.text.isEmpty, "still gathered onto the tick")
         _ = stream.frame(at: 0)
         #expect(stream.text == answer)
-        await Self.parsed(stream)
-        _ = stream.frame(at: 1 / 60)
+        await stream.settled()
         #expect(stream.slots.allSatisfy { !$0.fadesIn }, "nothing fades under Reduce Motion")
         withExtendedLifetime(clock) {}
     }
@@ -97,6 +96,23 @@ struct FrameTests {
         #expect(stream.slots.prefix(3).map(ObjectIdentifier.init) == slots.map(ObjectIdentifier.init), "existing slots are kept")
     }
 
+    /// Through the stream as the view drives it: no published block of a streaming answer shows a marker the
+    /// finished answer does not.
+    @Test func aStreamedAnswerShowsNoUnfinishedSyntax() async throws {
+        let answer = try String(contentsOf: TailRepairTests.answers.appendingPathComponent("showcase.md"), encoding: .utf8)
+        let (stream, clock) = Self.streaming()
+        let finished = TailRepairTests.visible(answer, streaming: false)
+        var end = answer.startIndex
+        while end < answer.endIndex {
+            end = answer.index(end, offsetBy: 23, limitedBy: answer.endIndex) ?? answer.endIndex
+            stream.receive(String(answer[..<end]))
+            await Self.drain(stream)
+            let shown = stream.blocks.map { TailRepairTests.visible($0.content) }.joined(separator: "\n")
+            #expect(finished.hasPrefix(shown), "at \(answer.distance(from: answer.startIndex, to: end)): …\(shown.suffix(30).debugDescription)")
+        }
+        withExtendedLifetime(clock) {}
+    }
+
     // MARK: Helpers
 
     static func streaming(text: String = "", reduceMotion: Bool = false) -> (MarkdownStream, ManualClock) {
@@ -106,17 +122,12 @@ struct FrameTests {
         return (stream, clock)
     }
 
-    /// Waits for the parse running off the main thread, without publishing it.
-    static func parsed(_ stream: MarkdownStream) async {
-        while stream.isParsing { try? await Task.sleep(for: .milliseconds(1)) }
-    }
-
     /// Runs frames until everything received is shown and published.
     static func drain(_ stream: MarkdownStream) async {
         var time = 0.0
         while stream.frame(at: time) || stream.isParsing {
             time += 1 / 60
-            await parsed(stream)
+            await stream.settled()
         }
     }
 }
