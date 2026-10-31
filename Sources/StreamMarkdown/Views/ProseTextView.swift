@@ -11,20 +11,8 @@ struct ProseTextView: UIViewRepresentable {
     func makeCoordinator() -> Coordinator { Coordinator() }
 
     func makeUIView(context: Context) -> UITextView {
-        let view = UITextView(usingTextLayoutManager: true)
-        view.isEditable = false
-        view.isSelectable = true
-        view.isScrollEnabled = false
-        view.backgroundColor = .clear
-        view.textContainerInset = .zero
-        view.textContainer.lineFragmentPadding = 0
-        view.adjustsFontForContentSizeCategory = false
-        view.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        view.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        view.delegate = context.coordinator
+        let view = UITextView.answerText(delegate: context.coordinator)
         context.coordinator.baseTraits = view.accessibilityTraits
-        StreamMarkdownDiagnostics.textViews += 1
-        StreamMarkdownDiagnostics.liveTextViews.add(view)
         return view
     }
 
@@ -58,23 +46,47 @@ struct ProseTextView: UIViewRepresentable {
         return size
     }
 
-    @MainActor
-    final class Coordinator: NSObject, UITextViewDelegate {
+    final class Coordinator: TextViewActions {
         var shown: RichText?
         var sizes: [CGFloat: CGSize] = [:]
-        var openURL: OpenURLAction?
-        weak var selection: SelectionOwner?
         var linkColor: UIColor?
         var baseTraits: UIAccessibilityTraits = []
+    }
+}
 
-        func textView(_ textView: UITextView, primaryActionFor textItem: UITextItem, defaultAction: UIAction) -> UIAction? {
-            guard case .link(let url) = textItem.content, let openURL else { return defaultAction }
-            return UIAction { _ in openURL(url) }
-        }
+extension UITextView {
+    /// A selectable, non-scrolling TextKit 2 text view with no insets, as every text of an answer is drawn in.
+    static func answerText(delegate: UITextViewDelegate) -> UITextView {
+        let view = UITextView(usingTextLayoutManager: true)
+        view.isEditable = false
+        view.isSelectable = true
+        view.isScrollEnabled = false
+        view.backgroundColor = .clear
+        view.textContainerInset = .zero
+        view.textContainer.lineFragmentPadding = 0
+        view.adjustsFontForContentSizeCategory = false
+        view.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        view.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        view.delegate = delegate
+        StreamMarkdownDiagnostics.textViews += 1
+        StreamMarkdownDiagnostics.liveTextViews.add(view)
+        return view
+    }
+}
 
-        func textViewDidChangeSelection(_ textView: UITextView) {
-            if textView.selectedRange.length > 0 { selection?.claim(textView) }
-        }
+/// Sends a text view's links to `openURL`, and hands its selection to the answer's selection owner.
+@MainActor
+class TextViewActions: NSObject, UITextViewDelegate {
+    var openURL: OpenURLAction?
+    weak var selection: SelectionOwner?
+
+    func textView(_ textView: UITextView, primaryActionFor textItem: UITextItem, defaultAction: UIAction) -> UIAction? {
+        guard case .link(let url) = textItem.content, let openURL else { return defaultAction }
+        return UIAction { _ in openURL(url) }
+    }
+
+    func textViewDidChangeSelection(_ textView: UITextView) {
+        if textView.selectedRange.length > 0 { selection?.claim(textView) }
     }
 }
 
