@@ -38,8 +38,8 @@ struct TableBlockView: View {
 }
 
 /// Columns as wide as their widest cell, a body cell wrapping past `maxColumnWidth` and a header cell never; rows as
-/// tall as their tallest cell. A table wider than `fitWidth` narrows its widest wrapping columns, none below its
-/// header or `minColumnWidth`, before it scrolls. Subviews come row by row, header first.
+/// tall as their tallest cell. A table wider than `fitWidth` that would fit with its widest wrapping columns narrowed,
+/// none below its header or `minColumnWidth`, is narrowed; one that would not keeps its widths and scrolls. Subviews come row by row, header first.
 struct TableLayout: Layout {
     let columns: Int
     let maxColumnWidth: CGFloat
@@ -74,7 +74,7 @@ struct TableLayout: Layout {
             widths[column] = max(widths[column], index < columns ? natural : min(natural, maxColumnWidth))
             floors[column] = max(floors[column], index < columns ? natural : min(natural, minColumnWidth))
         }
-        if fitWidth > 0, widths.reduce(0, +) > fitWidth {
+        if fitWidth > 0, widths.reduce(0, +) > fitWidth, floors.reduce(0, +) <= fitWidth {
             // The widest columns give way first: find the cap at which the columns, each kept to its floor, fit.
             var (low, high) = (CGFloat(0), widths.max() ?? 0)
             for _ in 0..<24 {

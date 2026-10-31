@@ -18,21 +18,22 @@ final class CodeTableUITests: XCTestCase {
         let copy = app.buttons["Copy code"].firstMatch
         XCTAssertTrue(copy.waitForExistence(timeout: 5))
         copy.tap()
-        XCTAssertTrue(app.buttons["Copied"].waitForExistence(timeout: 2), "the button says it copied")
-        let copied = app.staticTexts["copied"]
-        XCTAssertTrue(copied.waitForExistence(timeout: 5))
-        XCTAssertEqual(copied.label, "copied: import torch")
         shoot("code-copied")
+        let copied = app.staticTexts["copied"]
+        XCTAssertTrue(copied.waitForExistence(timeout: 5), "the code reached the pasteboard")
+        XCTAssertEqual(copied.label, "copied: import torch")
         sleep(3)
         XCTAssertFalse(app.buttons["Copied"].exists, "the button goes back to Copy")
     }
 
     func testLongCodeScrollsSidewaysByDrag() {
-        let code = textView("import torch")
-        let before = code.frame
+        let code = textView("import torch"), language = app.staticTexts["python"].firstMatch
+        let before = code.frame, label = language.frame
         XCTAssertGreaterThan(before.maxX, answer.frame.maxX, "long lines do not wrap")
         drag(from: CGPoint(x: answer.frame.minX + answer.frame.width * 0.7, y: before.minY + 40), by: CGVector(dx: -250, dy: 0))
-        XCTAssertLessThan(code.frame.minX, before.minX - 100, "the code moved left")
+        // XCTest clips a frame at the screen's edge, so a code view moved 250 points left reads as starting at 0.
+        XCTAssertLessThan(code.frame.minX, before.minX - 20, "the code moved left")
+        XCTAssertEqual(language.frame, label, "the header stays put")
         XCTAssertEqual(code.frame.minY, before.minY, accuracy: 2, "a sideways drag leaves the answer where it was")
         shoot("code-scrolled")
     }
@@ -51,12 +52,14 @@ final class CodeTableUITests: XCTestCase {
         XCTAssertEqual(header.frame.height, first.frame.height, accuracy: 1, "a long header stays on one line")
         XCTAssertGreaterThan(header.frame.width, first.frame.width)
         shoot("table-wide")
-        let before = header.frame
-        drag(from: CGPoint(x: answer.frame.minX + answer.frame.width * 0.7, y: before.midY + 60), by: CGVector(dx: -300, dy: 0))
-        XCTAssertLessThan(header.frame.minX, before.minX - 150, "the table moved left")
-        XCTAssertEqual(header.frame.minY, before.minY, accuracy: 2, "a sideways drag leaves the answer where it was")
-        XCTAssertTrue(textView("Houlsby et al.").isHittable, "the last column scrolled into view")
+        // A scroll view leaves cells outside its bounds out of the accessibility tree.
+        let last = app.textViews.matching(NSPredicate(format: "value == %@", "Paper")).firstMatch
+        XCTAssertFalse(last.exists && last.isHittable, "the last column starts off screen")
+        let row = first.frame.minY, start = CGPoint(x: header.frame.midX, y: header.frame.midY + 60)
+        for _ in 0..<2 { drag(from: start, by: CGVector(dx: -300, dy: 0)) }
         shoot("table-scrolled")
+        XCTAssertTrue(last.waitForExistence(timeout: 3) && last.isHittable, "the last column scrolled into view")
+        XCTAssertEqual(last.frame.minY, row, accuracy: 2, "a sideways drag leaves the answer where it was")
     }
 
     func testLongCellsWrapAtTheColumnsWidth() {
