@@ -64,16 +64,13 @@ struct SlotView: View {
     @Environment(\.streamMarkdownEm) private var em
 
     var body: some View {
-        let block = BlockView(kind: slot.kind, revision: slot.revision, content: slot.content)
+        BlockView(kind: slot.kind, revision: slot.revision, content: slot.content)
             .equatable()
+            // Text fades in word by word instead.
+            .modifier(FadeIn(enabled: slot.fadesIn && !slot.content.isText))
             .padding(.top, previous.map { style.spacing(between: $0.kind, and: slot.kind) * em } ?? 0)
             .environment(\.streamMarkdownFadesIn, slot.fadesIn)
-        // Text fades in word by word instead.
-        if slot.fadesIn, !slot.content.isText {
-            block.modifier(FadeIn())
-        } else {
-            block
-        }
+            .environment(\.streamMarkdownFadesFirstText, slot.fadesIn && slot.revision == slot.firstRevision)
     }
 }
 
@@ -92,17 +89,21 @@ struct BlockView: View, Equatable {
     }
 }
 
-/// Fades a view in over 150 ms when it appears.
+/// Fades a view in over 150 ms when it appears, if `enabled` then. A view that changes later, such as a list that
+/// gains a code block and becomes a stack, does not fade again.
 struct FadeIn: ViewModifier {
-    var enabled = true
+    let enabled: Bool
     @State private var shown = false
 
     func body(content: Content) -> some View {
         content
             .opacity(enabled && !shown ? 0 : 1)
             .onAppear {
-                guard enabled else { return }
-                withAnimation(.easeOut(duration: 0.15)) { shown = true }
+                if enabled {
+                    withAnimation(.easeOut(duration: 0.15)) { shown = true }
+                } else {
+                    shown = true
+                }
             }
     }
 }
@@ -207,8 +208,11 @@ extension EnvironmentValues {
     @Entry var streamMarkdownSelection: SelectionOwner?
     /// The answer's stream, which text views ask whether new text fades in.
     @Entry var streamMarkdownStream: MarkdownStream?
-    /// The block arrived while the answer streamed, so its first text fades in too.
+    /// The block arrived while the answer streamed, so a code block, table or formula arriving in it later fades in.
     @Entry var streamMarkdownFadesIn = false
+    /// The block is drawing for the first time, so a text view's first text fades in whole. A text view made later,
+    /// as when a list gains a code block and is cut around it, starts from text already on screen.
+    @Entry var streamMarkdownFadesFirstText = false
 }
 
 extension BlockContent {

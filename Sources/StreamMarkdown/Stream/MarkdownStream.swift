@@ -245,11 +245,14 @@ final class BlockSlot: Identifiable {
     private(set) var revision: UInt64
     private(set) var content: BlockContent
     let fadesIn: Bool
+    /// The revision it first drew, before which none of its text was on screen.
+    let firstRevision: UInt64
 
     init(_ block: MarkdownBlock, fadesIn: Bool) {
         id = block.id
         kind = block.kind
         revision = block.revision
+        firstRevision = block.revision
         content = block.content
         self.fadesIn = fadesIn
     }

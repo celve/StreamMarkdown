@@ -10,7 +10,7 @@ struct ProseTextView: UIViewRepresentable {
     @Environment(\.streamMarkdownStyle) private var style
     @Environment(\.streamMarkdownSelection) private var selection
     @Environment(\.streamMarkdownStream) private var stream
-    @Environment(\.streamMarkdownFadesIn) private var fadesIn
+    @Environment(\.streamMarkdownFadesFirstText) private var fadesFirstText
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
@@ -36,8 +36,7 @@ struct ProseTextView: UIViewRepresentable {
         let began = ContinuousClock.now
         let kept = view.show(text.string, replacing: previous?.string)
         StreamMarkdownDiagnostics.textUpdateMs += (ContinuousClock.now - began).milliseconds
-        // A block's first text fades whole only if the block itself arrived while streaming.
-        if fades, stream?.animates == true, previous != nil || fadesIn, kept < text.string.length {
+        if fades, stream?.animates == true, previous != nil || fadesFirstText, kept < text.string.length {
             view.fadeIn(NSRange(location: kept, length: text.string.length - kept))
         }
         view.accessibilityTraits = text.headingLevel == nil ? coordinator.baseTraits : coordinator.baseTraits.union(.header)

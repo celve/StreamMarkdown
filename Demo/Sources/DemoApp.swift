@@ -2,8 +2,8 @@
 import SwiftUI
 
 /// Replays recorded answers through StreamMarkdownView. Launch arguments: `-answer <id>` opens one, `-rate <tokens/s>`
-/// sets the pace (0 for instant), `-hud 0` hides the meter, `-scrollY <points>` scrolls the answer there once it is shown;
-/// `-perf 1` runs LIN-2404's measurement instead (see PerfRun).
+/// sets the pace (0 for instant), `-hud 0` hides the meter, `-scrollY <points>` scrolls the answer there once it is shown,
+/// `-follow 1` keeps its end in view as it grows; `-perf 1` runs LIN-2404's measurement instead (see PerfRun).
 @main
 struct DemoApp: App {
     var body: some Scene {
@@ -48,6 +48,7 @@ struct ReplayScreen: View {
     @State private var copied: String?
     @State private var position = ScrollPosition(edge: .top)
     private let showsMeter = UserDefaults.standard.object(forKey: "hud") == nil || UserDefaults.standard.bool(forKey: "hud")
+    private let follows = UserDefaults.standard.bool(forKey: "follow")
 
     var body: some View {
         ScrollView {
@@ -55,6 +56,9 @@ struct ReplayScreen: View {
                 .padding()
         }
         .scrollPosition($position)
+        .onScrollGeometryChange(for: CGFloat.self) { $0.contentSize.height } action: { _, _ in
+            if follows { position.scrollTo(edge: .bottom) }
+        }
         .safeAreaInset(edge: .top) { if showsMeter { Meter() } }
         .overlay(alignment: .bottom) {
             if let opened {
