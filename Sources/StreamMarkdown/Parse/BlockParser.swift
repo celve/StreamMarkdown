@@ -69,7 +69,7 @@ enum BlockParser {
         var text = text
         var extraction = MathExtractor.extract(text)
         var limit = text.utf8.count
-        if repairingTail, Tuning.repair {
+        if repairingTail {
             var hold = extraction.unfinished.flatMap { TailRepair.holds($0, in: text) ? $0.start : nil }
             // A `$` that closes at the very end may still be followed by a digit, which would make it currency.
             if let last = extraction.math.spans.last, last.delimiter == .dollar, last.range.upperBound == limit {

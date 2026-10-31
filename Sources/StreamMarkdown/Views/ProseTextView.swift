@@ -37,7 +37,7 @@ struct ProseTextView: UIViewRepresentable {
         let kept = view.show(text.string, replacing: previous?.string)
         StreamMarkdownDiagnostics.textUpdateMs += (ContinuousClock.now - began).milliseconds
         // A block's first text fades whole only if the block itself arrived while streaming.
-        if Tuning.wordFade, fades, stream?.animates == true, previous != nil || fadesIn, kept < text.string.length {
+        if fades, stream?.animates == true, previous != nil || fadesIn, kept < text.string.length {
             view.fadeIn(NSRange(location: kept, length: text.string.length - kept))
         }
         view.accessibilityTraits = text.headingLevel == nil ? coordinator.baseTraits : coordinator.baseTraits.union(.header)
@@ -132,7 +132,7 @@ final class ProseUITextView: UITextView {
     /// included, is replaced in the text storage, so TextKit lays out again only the paragraphs that changed.
     /// Returns how many characters of `previous` start `text` as well, which are not new.
     func show(_ text: NSAttributedString, replacing previous: NSAttributedString?) -> Int {
-        guard Tuning.tailReplace, let previous, previous.length == textStorage.length else {
+        guard let previous, previous.length == textStorage.length else {
             attributedText = text
             return 0
         }

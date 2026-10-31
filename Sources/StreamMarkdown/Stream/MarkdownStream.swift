@@ -122,7 +122,7 @@ final class MarkdownStream {
     /// Takes the whole answer so far: parsed now, or released by the pacer on the clock's tick while it streams.
     func receive(_ text: String) {
         pacer.receive(text)
-        guard Tuning.pace, isStreaming, let clock else { return reveal() }
+        guard isStreaming, let clock else { return reveal() }
         if pacer.backlog > 0 { clock.requestFrames() } else { update(text: pacer.text) }
     }
 
