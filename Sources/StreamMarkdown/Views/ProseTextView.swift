@@ -38,6 +38,8 @@ struct ProseTextView: UIViewRepresentable {
         StreamMarkdownDiagnostics.textUpdateMs += (ContinuousClock.now - began).milliseconds
         if fades, stream?.animates == true, previous != nil || fadesFirstText, kept < text.string.length {
             view.fadeIn(NSRange(location: kept, length: text.string.length - kept))
+        } else if stream?.animates != true {
+            view.finishFades()
         }
         view.accessibilityTraits = text.headingLevel == nil ? coordinator.baseTraits : coordinator.baseTraits.union(.header)
         StreamMarkdownDiagnostics.textViewUpdates += 1
@@ -201,8 +203,10 @@ final class ProseUITextView: UITextView {
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.fadeDuration + 0.05) { [weak self] in self?.layoutFadeMask() }
     }
 
-    /// Fits the mask to where the fading ranges are laid out now, since a word that grows can wrap to the next line,
-    /// and drops the parts whose ramp has finished; the mask goes once none is left.
+    /// Fits the mask to where the text is laid out now, since a word that grows can wrap to the next line, and drops
+    /// the parts whose ramp has finished; the mask goes once none is left. The settled part covers everything above the
+    /// paragraph where the oldest fade starts, and from there every character not fading, wherever its line puts it:
+    /// right-to-left text sits to the right of what follows it, and text shown without a fade can follow a fade.
     private func layoutFadeMask() {
         let now = CACurrentMediaTime()
         fades.removeAll { fade in
@@ -214,32 +218,39 @@ final class ProseUITextView: UITextView {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         fadeMask.frame = layer.bounds
-        let inset = textContainerInset
         let length = textStorage.length
-        var oldest: CGRect?
+        var fading = IndexSet()
         for fade in fades {
-            let path = CGMutablePath()
             let range = NSIntersectionRange(fade.range, NSRange(location: 0, length: length))
-            if range.length > 0, let textRange = NSTextRange(range, in: content) {
-                layout.ensureLayout(for: textRange)
-                layout.enumerateTextSegments(in: textRange, type: .standard, options: []) { _, segment, _, _ in
-                    let line = segment.offsetBy(dx: inset.left, dy: inset.top)
-                    if oldest == nil { oldest = line }
-                    // Glyphs reach a little past their line's box.
-                    path.addRect(line.insetBy(dx: -2, dy: -2))
-                    return true
-                }
-            }
-            fade.part.path = path
+            fade.part.path = linesPath(of: range, in: layout)
+            if range.length > 0 { fading.insert(integersIn: range.location..<NSMaxRange(range)) }
         }
-        // Everything above the oldest fading line, and that line up to where the fading starts.
         let far: CGFloat = 100_000
         let settled = CGMutablePath()
-        let start = oldest ?? CGRect(x: far, y: far, width: 0, height: 0)
-        settled.addRect(CGRect(x: -far, y: -far, width: 2 * far, height: far + start.minY))
-        settled.addRect(CGRect(x: -far, y: start.minY, width: far + start.minX, height: start.height))
+        var from = 0
+        if let oldest = fading.first, let location = content.location(content.documentRange.location, offsetBy: oldest),
+           let paragraph = layout.textLayoutFragment(for: location) {
+            from = content.offset(from: content.documentRange.location, to: paragraph.rangeInElement.location)
+            settled.addRect(CGRect(x: -far, y: -far, width: 2 * far, height: far + paragraph.layoutFragmentFrame.minY + textContainerInset.top))
+        }
+        var shown = IndexSet(integersIn: from..<max(from, length))
+        shown.subtract(fading)
+        for run in shown.rangeView { settled.addPath(linesPath(of: NSRange(run), in: layout)) }
         settledPart.path = settled
         CATransaction.commit()
+    }
+
+    /// The boxes of the lines a range is laid out on, in the view's coordinates, a little larger since glyphs reach
+    /// past their line's box.
+    private func linesPath(of range: NSRange, in layout: NSTextLayoutManager) -> CGPath {
+        let path = CGMutablePath()
+        guard range.length > 0, let content = layout.textContentManager, let textRange = NSTextRange(range, in: content) else { return path }
+        layout.ensureLayout(for: textRange)
+        layout.enumerateTextSegments(in: textRange, type: .standard, options: []) { _, segment, _, _ in
+            path.addRect(segment.offsetBy(dx: textContainerInset.left, dy: textContainerInset.top).insetBy(dx: -2, dy: -2))
+            return true
+        }
+        return path
     }
 
     /// Shows everything at full strength now, as when the stream ends or Reduce Motion turns on.
