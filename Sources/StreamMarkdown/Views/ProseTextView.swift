@@ -181,13 +181,18 @@ final class ProseUITextView: UITextView {
         fadeLink = link
     }
 
-    /// Sets each fading run's colours at the ramp's alpha as rendering attributes, which redraw without layout.
+    /// Sets each fading run's colours at the ramp's alpha as rendering attributes, then redraws the lines they are on.
     private func drawFades(at now: CFTimeInterval) {
         guard let layout = textLayoutManager, let content = layout.textContentManager else { return finishFades() }
         let length = textStorage.length
+        var dirty = CGRect.null
         fades = fades.filter { fade in
             let range = NSIntersectionRange(fade.range, NSRange(location: 0, length: length))
             guard range.length > 0, let textRange = NSTextRange(range, in: content) else { return false }
+            layout.enumerateTextSegments(in: textRange, type: .standard, options: []) { _, segment, _, _ in
+                dirty = dirty.union(segment)
+                return true
+            }
             let progress = (now - fade.start) / Self.fadeDuration
             guard progress < 1 else {
                 layout.removeRenderingAttribute(.foregroundColor, for: textRange)
@@ -207,7 +212,18 @@ final class ProseUITextView: UITextView {
             }
             return true
         }
+        if !dirty.isNull { redraw(dirty.offsetBy(dx: textContainerInset.left, dy: textContainerInset.top)) }
         if fades.isEmpty { finishFades() }
+    }
+
+    /// UITextView does not redraw text whose rendering attributes changed, so the views drawing those lines are told.
+    private func redraw(_ rect: CGRect) {
+        var views = subviews
+        while let view = views.popLast() {
+            let local = convert(rect, to: view).intersection(view.bounds)
+            if !local.isNull, !local.isEmpty { view.setNeedsDisplay(local) }
+            views += view.subviews
+        }
     }
 
     private func finishFades() {
