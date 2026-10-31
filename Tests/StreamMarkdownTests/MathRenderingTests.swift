@@ -116,16 +116,22 @@ struct MathRenderingTests {
         #expect(formulas[0].color == style.quoteText)
     }
 
-    @Test func sourceDrawnBlocksShowFormulasAsWritten() throws {
-        let list = build("- item\n\n  | $a$ | b |\n  |---|---|\n  | 1 | 2 |")
-        #expect(list.string.contains("$a$"))
-        let quoted = try #require(BlockParser.parse("> <div>$x$</div>\n>\n> | $a$ |\n> |---|").first)
-        guard case .quote(let children) = BlockRenderer.render(quoted.markup, kind: quoted.kind, source: quoted.source, style: style, math: quoted.math) else {
-            Issue.record("not a quote")
+    @Test func tableCellsDrawFormulasAndSourceDrawnBlocksShowThemAsWritten() throws {
+        let list = try #require(BlockParser.parse("- item\n\n  | $a$ | b |\n  |---|---|\n  | 1 | 2 |").first)
+        guard case .stack(let items) = BlockRenderer.render(list.markup, kind: list.kind, source: list.source, style: style, math: list.math),
+              case .table(let table) = items.last?.content else {
+            Issue.record("no table in the list")
             return
         }
-        let texts = children.compactMap { child -> String? in if case .source(let text) = child.content { text.string.string } else { nil } }
-        #expect(texts.contains { $0.contains("$a$") && $0.contains("|") }, "\(texts)")
+        #expect(attachments(in: table.rows[0][0].text.string).map(\.tex) == ["a"])
+        let quoted = try #require(BlockParser.parse("> <div>$x$</div>\n>\n> | $a$ |\n> |---|").first)
+        guard case .quote(let children) = BlockRenderer.render(quoted.markup, kind: quoted.kind, source: quoted.source, style: style, math: quoted.math),
+              case .source(let html) = children.first?.content, case .table(let quotedTable) = children.last?.content else {
+            Issue.record("not a quote of HTML and a table")
+            return
+        }
+        #expect(html.string.string.contains("$x$"))
+        #expect(attachments(in: quotedTable.rows[0][0].text.string).map(\.tex) == ["a"])
     }
 
     private func attachments(in text: NSAttributedString) -> [MathAttachment] {

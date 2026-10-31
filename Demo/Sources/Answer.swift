@@ -12,6 +12,7 @@ struct Answer: Identifiable, Hashable {
             ("follow-up", "Follow-up work"),
             ("showcase", "Every prose block"),
             ("lora", "LoRA: math, table, code"),
+            ("code-tables", "Code and tables"),
             ("attention", "Attention: heavy math"),
             ("math-edge", "Math edge cases"),
         ]

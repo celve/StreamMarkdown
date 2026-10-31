@@ -1,6 +1,6 @@
 #!/bin/bash
 # Runs the demo's UI checks on the shared iPhone Duo in light and dark appearance, saving screenshots to <shots dir>
-# named <check>-<posture>-<appearance>.png. usage: [POSTURE=folded] [ONLY=<test name>] [KEEP=1] scripts/ui-check.sh <issue> <shots dir>
+# named <check>-<posture>-<appearance>.png. usage: [POSTURE=folded] [ONLY=<class>[/<test>]] [KEEP=1] scripts/ui-check.sh <issue> <shots dir>
 set -u
 cd "$(dirname "$0")/.."
 issue=${1:?usage: scripts/ui-check.sh <issue> <shots dir>}
@@ -16,7 +16,7 @@ for appearance in ${APPEARANCES:-light dark}; do
   xcrun simctl ui "$udid" appearance "$appearance"
   TEST_RUNNER_SHOTS_DIR="$shots" TEST_RUNNER_SHOTS_SUFFIX="-${POSTURE:-folded}-$appearance" \
     xcodebuild test-without-building "${build[@]}" -destination "id=$udid" -parallel-testing-enabled NO \
-    -collect-test-diagnostics never ${ONLY:+-only-testing:StreamMarkdownDemoUITests/DemoUITests/$ONLY} 2>&1 |
+    -collect-test-diagnostics never ${ONLY:+-only-testing:StreamMarkdownDemoUITests/$ONLY} 2>&1 |
     grep -E "Test Case .*(passed|failed)|error:|HEADING-SNAPSHOT|\*\* TEST"
 done
 [ -n "${KEEP:-}" ] || "$duo" release "$issue"

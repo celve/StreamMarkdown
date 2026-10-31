@@ -123,8 +123,11 @@ final class DemoUITests: XCTestCase {
         app.launch()
         XCTAssertTrue(app.textViews.firstMatch.waitForExistence(timeout: 20))
     }
+}
 
-    private func shoot(_ name: String) {
+extension XCTestCase {
+    @MainActor
+    func shoot(_ name: String) {
         let shot = XCUIScreen.main.screenshot()
         let attachment = XCTAttachment(screenshot: shot)
         attachment.name = name

@@ -1,0 +1,135 @@
+import XCTest
+
+/// Code blocks and tables on the simulator: Copy reaches the pasteboard, long code and wide tables scroll sideways by
+/// touch drag while a vertical drag on them still scrolls the answer, table headers stay on one line, and a link in a
+/// cell reaches `openURL`.
+@MainActor
+final class CodeTableUITests: XCTestCase {
+    private var app: XCUIApplication!
+
+    override func setUp() async throws {
+        continueAfterFailure = false
+        app = XCUIApplication()
+        app.launchArguments = ["-answer", "code-tables", "-rate", "0", "-hud", "0"]
+        app.launch()
+        XCTAssertTrue(app.textViews.firstMatch.waitForExistence(timeout: 20))
+    }
+
+    func testCopyPutsTheCodeOnThePasteboard() {
+        let copy = app.buttons["Copy code"].firstMatch
+        XCTAssertTrue(copy.waitForExistence(timeout: 5))
+        copy.tap()
+        shoot("code-copied")
+        let copied = app.staticTexts["copied"]
+        XCTAssertTrue(copied.waitForExistence(timeout: 5), "the code reached the pasteboard")
+        XCTAssertEqual(copied.label, "copied: import torch")
+        sleep(3)
+        XCTAssertFalse(app.buttons["Copied"].exists, "the button goes back to Copy")
+    }
+
+    func testLongCodeScrollsSidewaysByDrag() {
+        let code = textView("import torch"), language = app.staticTexts["python"].firstMatch
+        let before = code.frame, label = language.frame
+        XCTAssertGreaterThan(before.maxX, app.buttons["Copy code"].firstMatch.frame.maxX + 100, "long lines run past the block instead of wrapping")
+        drag(from: CGPoint(x: app.buttons["Copy code"].firstMatch.frame.minX - 40, y: before.minY + 40), by: CGVector(dx: -250, dy: 0))
+        // XCTest clips a frame at the screen's edge, so a code view moved 250 points left reads as starting at 0.
+        XCTAssertLessThan(code.frame.minX, before.minX - 20, "the code moved left")
+        XCTAssertEqual(language.frame, label, "the header stays put")
+        XCTAssertEqual(code.frame.minY, before.minY, accuracy: 2, "a sideways drag leaves the answer where it was")
+        shoot("code-scrolled")
+    }
+
+    func testAVerticalDragOnCodeScrollsTheAnswer() {
+        let code = textView("import torch")
+        let before = code.frame
+        drag(from: CGPoint(x: answer.frame.midX, y: before.minY + 60), by: CGVector(dx: 0, dy: -250))
+        XCTAssertLessThan(code.frame.minY, before.minY - 100, "the answer scrolled")
+        XCTAssertEqual(code.frame.minX, before.minX, accuracy: 2)
+    }
+
+    func testAWideTableScrollsSidewaysAndKeepsItsHeaderOnOneLine() {
+        let header = cell("Trainable parameters"), first = cell("Method")
+        reveal(cell("Prefix tuning"))
+        XCTAssertEqual(header.frame.height, first.frame.height, accuracy: 1, "a long header stays on one line")
+        XCTAssertGreaterThan(header.frame.width, first.frame.width)
+        shoot("table-wide")
+        // A scroll view leaves cells outside its bounds out of the accessibility tree.
+        let last = app.staticTexts.matching(NSPredicate(format: "label == %@", "Paper")).firstMatch
+        XCTAssertFalse(last.exists && last.isHittable, "the last column starts off screen")
+        let row = first.frame.minY, start = CGPoint(x: header.frame.midX, y: header.frame.midY + 60)
+        for _ in 0..<2 { drag(from: start, by: CGVector(dx: -300, dy: 0)) }
+        shoot("table-scrolled")
+        XCTAssertTrue(last.waitForExistence(timeout: 3) && last.isHittable, "the last column scrolled into view")
+        XCTAssertEqual(last.frame.minY, row, accuracy: 2, "a sideways drag leaves the answer where it was")
+
+        let link = app.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "Hu et al.")).firstMatch
+        XCTAssertTrue(link.waitForExistence(timeout: 3))
+        link.tap()
+        let opened = app.staticTexts["opened-url"]
+        XCTAssertTrue(opened.waitForExistence(timeout: 5), "a link in a cell reaches openURL")
+        XCTAssertEqual(opened.label, "openURL: https://arxiv.org/abs/2106.09685")
+    }
+
+    func testLongCellsWrapAtTheColumnsWidth() {
+        let wrapped = cell("Small ranks"), short = cell("Rank r")
+        reveal(cell("Barely matters"))
+        XCTAssertGreaterThan(wrapped.frame.height, short.frame.height * 1.8, "a long body cell wraps")
+        XCTAssertLessThanOrEqual(wrapped.frame.maxX, answer.frame.maxX, "a table of wrapped cells fits the answer's width")
+        XCTAssertEqual(cell("Which matrices").frame.height, short.frame.height, accuracy: 1, "the widest column gives way, not the short one")
+        shoot("table-wrapped")
+    }
+
+    func testCodeInAListItemIsACodeBlock() {
+        let code = textView("pip install peft")
+        reveal(textView("let config"))
+        let item = app.textViews.matching(NSPredicate(format: "value CONTAINS %@", "Install the libraries")).firstMatch
+        XCTAssertGreaterThan(code.frame.minX, item.frame.minX + 15, "a list's code block sits at its item's indent")
+        XCTAssertEqual(code.frame.minX, textView("let config").frame.minX, accuracy: 1)
+        shoot("code-in-list")
+        reveal(textView("epoch 1/3"))
+        shoot("code-end")
+    }
+
+    func testStreamingCodeIsPlainUntilItCloses() {
+        app.terminate()
+        app.launchArguments = ["-answer", "code-tables", "-rate", "40", "-hud", "0"]
+        app.launch()
+        let code = app.textViews.matching(NSPredicate(format: "value BEGINSWITH %@", "import torch")).firstMatch
+        XCTAssertTrue(code.waitForExistence(timeout: 20))
+        sleep(2)
+        shoot("code-streaming")
+    }
+
+    private var window: XCUIElement { app.windows.firstMatch }
+
+    /// The answer's vertical scroll view: the tallest one, since each code block and table has its own.
+    private var answer: XCUIElement {
+        app.scrollViews.allElementsBoundByIndex.max { $0.frame.height < $1.frame.height } ?? window
+    }
+
+    private func textView(_ prefix: String) -> XCUIElement {
+        let view = app.textViews.matching(NSPredicate(format: "value BEGINSWITH %@", prefix)).firstMatch
+        XCTAssertTrue(view.waitForExistence(timeout: 5), "no text view starting \(prefix)")
+        return view
+    }
+
+    /// A table cell, drawn as a label.
+    private func cell(_ prefix: String) -> XCUIElement {
+        let view = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", prefix)).firstMatch
+        XCTAssertTrue(view.waitForExistence(timeout: 5), "no cell starting \(prefix)")
+        return view
+    }
+
+    /// Scrolls the answer up until the element is on screen, dragging in the left margin.
+    private func reveal(_ element: XCUIElement) {
+        for _ in 0..<12 where element.frame.maxY > window.frame.maxY - 80 {
+            drag(from: CGPoint(x: 8, y: window.frame.height * 0.7), by: CGVector(dx: 0, dy: -window.frame.height * 0.35))
+        }
+    }
+
+    private func drag(from point: CGPoint, by offset: CGVector) {
+        let start = window.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: point.x, dy: point.y))
+        start.press(forDuration: 0.05, thenDragTo: start.withOffset(offset), withVelocity: 600, thenHoldForDuration: 0.3)
+        usleep(500_000)
+    }
+}

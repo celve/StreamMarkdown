@@ -104,9 +104,9 @@ struct ProseBuilderTests {
         #expect(build("- \n- b").string.string == "\t\u{2022}\t\n\t\u{2022}\tb")
     }
 
-    @Test func blocksInsideAnItemStayInItsText() throws {
-        let text = build("- item\n\n  > quoted\n\n  ```\n  code\n  more\n  ```")
-        #expect(text.string.string == "\t\u{2022}\titem\nquoted\ncode\u{2028}more")
+    @Test func quotesAndHTMLInsideAnItemStayInItsText() throws {
+        let text = build("- item\n\n  > quoted\n\n  <div>\n  html\n  </div>")
+        #expect(text.string.string == "\t\u{2022}\titem\nquoted\n<div>\u{2028}html\u{2028}</div>")
         let item = try #require(paragraph(text, line: 0)), quote = try #require(paragraph(text, line: 1))
         #expect(quote.headIndent > item.headIndent)
         #expect(color(text, at: 8) == style.quoteText)
@@ -127,19 +127,20 @@ struct ProseBuilderTests {
         guard case .rule = blocks[2].content else { Issue.record("not a rule"); return }
     }
 
-    @Test func codeTablesAndHTMLFallBackToTheirSource() throws {
-        let code = try render("```python\nh = x @ W0.T\n```", kind: .codeBlock(language: "python"))
-        #expect(code.string.string == "h = x @ W0.T")
-        #expect(try #require(font(code, at: 0)).fontDescriptor.symbolicTraits.contains(.monoSpace))
-        let table = "| a | b |\n|---|---|\n| 1 | 2 |"
-        #expect(try render(table, kind: .table).string.string == table)
-        #expect(try render("<details>x</details>", kind: .html).string.string == "<details>x</details>")
+    @Test func htmlFallsBackToItsSource() throws {
+        let html = try render("<details>x</details>", kind: .html)
+        #expect(html.string.string == "<details>x</details>")
+        #expect(try #require(font(html, at: 0)).fontDescriptor.symbolicTraits.contains(.monoSpace))
     }
 
     private func build(_ markdown: String) -> RichText {
         let document = Document(parsing: markdown, options: [.disableSmartOpts])
         let block = document.child(at: 0) ?? document
-        return ProseBuilder.build(block, style: style, math: .empty)
+        guard case .text(let text) = ProseBuilder.content(block, style: style, math: .empty) else {
+            Issue.record("\(markdown) did not build into one text")
+            return RichText(NSAttributedString())
+        }
+        return text
     }
 
     private func render(_ markdown: String, kind: BlockKind) throws -> RichText {

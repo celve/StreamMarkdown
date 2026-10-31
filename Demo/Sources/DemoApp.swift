@@ -2,7 +2,8 @@
 import SwiftUI
 
 /// Replays recorded answers through StreamMarkdownView. Launch arguments: `-answer <id>` opens one, `-rate <tokens/s>`
-/// sets the pace (0 for instant), `-hud 0` hides the meter; `-perf 1` runs LIN-2404's measurement instead (see PerfRun).
+/// sets the pace (0 for instant), `-hud 0` hides the meter, `-scrollY <points>` scrolls the answer there once it is shown;
+/// `-perf 1` runs LIN-2404's measurement instead (see PerfRun).
 @main
 struct DemoApp: App {
     var body: some Scene {
@@ -44,6 +45,8 @@ struct ReplayScreen: View {
         return n > 0 ? .tokens(n) : .instant
     }()
     @State private var opened: URL?
+    @State private var copied: String?
+    @State private var position = ScrollPosition(edge: .top)
     private let showsMeter = UserDefaults.standard.object(forKey: "hud") == nil || UserDefaults.standard.bool(forKey: "hud")
 
     var body: some View {
@@ -51,6 +54,7 @@ struct ReplayScreen: View {
             StreamMarkdownView(replay.shown, isStreaming: replay.isStreaming)
                 .padding()
         }
+        .scrollPosition($position)
         .safeAreaInset(edge: .top) { if showsMeter { Meter() } }
         .overlay(alignment: .bottom) {
             if let opened {
@@ -60,6 +64,25 @@ struct ReplayScreen: View {
                     .background(.regularMaterial, in: .capsule)
                     .padding()
                     .accessibilityIdentifier("opened-url")
+            } else if let copied {
+                Text("copied: \(copied.prefix { $0 != "\n" })")
+                    .font(.footnote)
+                    .lineLimit(1)
+                    .padding(10)
+                    .background(.regularMaterial, in: .capsule)
+                    .padding()
+                    .accessibilityIdentifier("copied")
+            }
+        }
+        .task {
+            // Polls the change count: the change notification never reached the overlay for the app's own copy.
+            var count = UIPasteboard.general.changeCount
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .milliseconds(300))
+                if UIPasteboard.general.changeCount != count {
+                    count = UIPasteboard.general.changeCount
+                    copied = UIPasteboard.general.string
+                }
             }
         }
         .environment(\.openURL, OpenURLAction { url in
@@ -83,11 +106,18 @@ struct ReplayScreen: View {
             }
         }
         .onChange(of: rate) { start() }
-        .task { start() }
+        .task {
+            start()
+            let y = UserDefaults.standard.double(forKey: "scrollY")
+            guard y > 0 else { return }
+            try? await Task.sleep(for: .seconds(1))
+            position.scrollTo(y: y)
+        }
     }
 
     private func start() {
         opened = nil
+        copied = nil
         StreamMarkdownDiagnostics.reset()
         replay.play(answer.text, rate: rate)
     }

@@ -47,7 +47,12 @@ struct ParsedBlock {
     /// The formulas of the parse, which the markup's text names by placeholder.
     let math: MathTable
 
-    var key: BlockKey { BlockKey(kind: kind, inputs: BlockRenderer.inputs(markup, kind: kind, source: source, math: math)) }
+    /// Its key as a finished block.
+    var key: BlockKey { key(RenderContext()) }
+
+    func key(_ context: RenderContext) -> BlockKey {
+        BlockKey(kind: kind, inputs: BlockRenderer.inputs(markup, kind: kind, source: source, math: math, context: context))
+    }
 }
 
 /// Everything a block's rendering reads besides the style: two blocks with equal keys render alike.

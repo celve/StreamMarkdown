@@ -11,21 +11,8 @@ struct ProseTextView: UIViewRepresentable {
     func makeCoordinator() -> Coordinator { Coordinator() }
 
     func makeUIView(context: Context) -> UITextView {
-        // The designated initializer, so the subclass's stored properties are set up; a nil container means TextKit 2.
-        let view = ProseUITextView(frame: .zero, textContainer: nil)
-        view.isEditable = false
-        view.isSelectable = true
-        view.isScrollEnabled = false
-        view.backgroundColor = .clear
-        view.textContainerInset = .zero
-        view.textContainer.lineFragmentPadding = 0
-        view.adjustsFontForContentSizeCategory = false
-        view.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        view.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        view.delegate = context.coordinator
+        let view = UITextView.answerText(delegate: context.coordinator)
         context.coordinator.baseTraits = view.accessibilityTraits
-        StreamMarkdownDiagnostics.textViews += 1
-        StreamMarkdownDiagnostics.liveTextViews.add(view)
         return view
     }
 
@@ -59,23 +46,48 @@ struct ProseTextView: UIViewRepresentable {
         return size
     }
 
-    @MainActor
-    final class Coordinator: NSObject, UITextViewDelegate {
+    final class Coordinator: TextViewActions {
         var shown: RichText?
         var sizes: [CGFloat: CGSize] = [:]
-        var openURL: OpenURLAction?
-        weak var selection: SelectionOwner?
         var linkColor: UIColor?
         var baseTraits: UIAccessibilityTraits = []
+    }
+}
 
-        func textView(_ textView: UITextView, primaryActionFor textItem: UITextItem, defaultAction: UIAction) -> UIAction? {
-            guard case .link(let url) = textItem.content, let openURL else { return defaultAction }
-            return UIAction { _ in openURL(url) }
-        }
+extension UITextView {
+    /// A selectable, non-scrolling TextKit 2 text view with no insets, as every text of an answer is drawn in.
+    static func answerText(delegate: UITextViewDelegate) -> UITextView {
+        // The designated initializer, so the subclass's stored properties are set up; a nil container means TextKit 2.
+        let view = ProseUITextView(frame: .zero, textContainer: nil)
+        view.isEditable = false
+        view.isSelectable = true
+        view.isScrollEnabled = false
+        view.backgroundColor = .clear
+        view.textContainerInset = .zero
+        view.textContainer.lineFragmentPadding = 0
+        view.adjustsFontForContentSizeCategory = false
+        view.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        view.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        view.delegate = delegate
+        StreamMarkdownDiagnostics.textViews += 1
+        StreamMarkdownDiagnostics.liveTextViews.add(view)
+        return view
+    }
+}
 
-        func textViewDidChangeSelection(_ textView: UITextView) {
-            if textView.selectedRange.length > 0 { selection?.claim(textView) }
-        }
+/// Sends a text view's links to `openURL`, and hands its selection to the answer's selection owner.
+@MainActor
+class TextViewActions: NSObject, UITextViewDelegate {
+    var openURL: OpenURLAction?
+    weak var selection: SelectionOwner?
+
+    func textView(_ textView: UITextView, primaryActionFor textItem: UITextItem, defaultAction: UIAction) -> UIAction? {
+        guard case .link(let url) = textItem.content, let openURL else { return defaultAction }
+        return UIAction { _ in openURL(url) }
+    }
+
+    func textViewDidChangeSelection(_ textView: UITextView) {
+        if textView.selectedRange.length > 0 { selection?.claim(textView) }
     }
 }
 
@@ -136,20 +148,7 @@ final class ProseUITextView: UITextView {
         }
     }
     override var accessibilityValue: String? {
-        get {
-            let text = attributedText ?? NSAttributedString()
-            var spoken = ""
-            var hasMath = false
-            text.enumerateAttribute(.attachment, in: NSRange(location: 0, length: text.length)) { value, range, _ in
-                if let math = value as? MathAttachment {
-                    spoken += math.tex
-                    hasMath = true
-                } else {
-                    spoken += (text.string as NSString).substring(with: range)
-                }
-            }
-            return hasMath ? spoken : super.accessibilityValue
-        }
+        get { attributedText?.spokenMath ?? super.accessibilityValue }
         set { super.accessibilityValue = newValue }
     }
 }
@@ -168,6 +167,37 @@ final class SelectionOwner {
     func claim(_ view: UITextView) {
         if let holder, holder !== view { holder.selectedTextRange = nil }
         holder = view
+    }
+}
+extension NSAttributedString {
+    /// The text with each formula read as its TeX, or nil when it holds none.
+    var spokenMath: String? {
+        var spoken = ""
+        var hasMath = false
+        enumerateAttribute(.attachment, in: NSRange(location: 0, length: length)) { value, range, _ in
+            if let math = value as? MathAttachment {
+                spoken += math.tex
+                hasMath = true
+            } else {
+                spoken += (string as NSString).substring(with: range)
+            }
+        }
+        return hasMath ? spoken : nil
+    }
+
+    /// The link under a point of the text laid out at `size`, as a label lays it out, if the point is on its text.
+    func link(at point: CGPoint, within size: CGSize) -> URL? {
+        let storage = NSTextStorage(attributedString: self)
+        let layout = NSLayoutManager()
+        let container = NSTextContainer(size: size)
+        container.lineFragmentPadding = 0
+        layout.addTextContainer(container)
+        storage.addLayoutManager(layout)
+        var fraction: CGFloat = 0
+        let glyph = layout.glyphIndex(for: point, in: container, fractionOfDistanceThroughGlyph: &fraction)
+        guard glyph < layout.numberOfGlyphs,
+              layout.boundingRect(forGlyphRange: NSRange(location: glyph, length: 1), in: container).insetBy(dx: -6, dy: -6).contains(point) else { return nil }
+        return attribute(.link, at: layout.characterIndexForGlyph(at: glyph), effectiveRange: nil) as? URL
     }
 }
 #endif

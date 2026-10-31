@@ -9,7 +9,8 @@ import AppKit
 
 /// Builds one prose block (a paragraph, a heading or a whole list) into an attributed string for one text view.
 /// Each paragraph inside it gets its own indents and spacing; list markers sit right-aligned on a tab before the text.
-/// Formulas become SwiftMath images; a display formula takes a line of its own.
+/// Formulas become SwiftMath images; a display formula takes a line of its own. A code block or table inside a list cuts
+/// the text, and goes between the pieces as its own view.
 struct ProseBuilder: MarkupWalker {
 
     private struct Marker {
@@ -21,7 +22,12 @@ struct ProseBuilder: MarkupWalker {
 
     private let style: ResolvedStyle
     private let math: MathTable
-    private let output = NSMutableAttributedString()
+    private let context: RenderContext
+    private var output = NSMutableAttributedString()
+    /// The pieces before `output`, when a code block or table cut the text.
+    private var items: [StackItem] = []
+    /// The space above `output`, when it follows a piece.
+    private var outputGap: CGFloat = 0
     private var fonts: [FontSpec: PlatformFont] = [:]
 
     private var indent: CGFloat = 0
@@ -39,23 +45,52 @@ struct ProseBuilder: MarkupWalker {
     private var paragraphStyle = NSParagraphStyle()
     private var separatorAttributes: [NSAttributedString.Key: Any] = [:]
     private var headingLevel: Int?
+    private var alignment = NSTextAlignment.natural
 
     private var bold = false
     private var italic = false
     private var strikethrough = false
     private var link: URL?
 
-    private init(style: ResolvedStyle, color: PlatformColor?, math: MathTable) {
+    private init(style: ResolvedStyle, color: PlatformColor?, math: MathTable, context: RenderContext = RenderContext()) {
         self.style = style
+        self.context = context
         self.color = color ?? style.text
         self.math = math
         blockFont = style.body
     }
 
+    /// A paragraph or heading.
     static func build(_ markup: Markup, style: ResolvedStyle, color: PlatformColor? = nil, math: MathTable) -> RichText {
         var builder = ProseBuilder(style: style, color: color, math: math)
         builder.visit(markup)
         return RichText(builder.output, headingLevel: (markup as? Heading)?.level)
+    }
+
+    /// A list: one text, or a stack of texts and the code blocks and tables between them.
+    static func content(_ markup: Markup, style: ResolvedStyle, color: PlatformColor? = nil, math: MathTable,
+                        context: RenderContext = RenderContext()) -> BlockContent {
+        var builder = ProseBuilder(style: style, color: color, math: math, context: context)
+        builder.visit(markup)
+        guard !builder.items.isEmpty else { return .text(RichText(builder.output, headingLevel: (markup as? Heading)?.level)) }
+        builder.cut()
+        return .stack(builder.items)
+    }
+
+    /// A table cell's text, header cells in the header font. A missing cell is empty.
+    static func cell(_ cell: Table.Cell?, header: Bool, alignment: Table.ColumnAlignment?, style: ResolvedStyle, color: PlatformColor?,
+                     math: MathTable) -> RichText {
+        var builder = ProseBuilder(style: style, color: color, math: math)
+        builder.alignment = switch alignment {
+        case .left: .left
+        case .center: .center
+        case .right: .right
+        case nil: .natural
+        }
+        builder.beginParagraph(header ? style.tableHeader : style.table)
+        if let cell { builder.descendInto(cell) }
+        builder.endParagraph()
+        return RichText(builder.output)
     }
 
     /// Text drawn as it is, in the style's monospaced source font.
@@ -126,7 +161,7 @@ struct ProseBuilder: MarkupWalker {
     }
 
     mutating func visitCodeBlock(_ code: CodeBlock) {
-        sourceParagraph(code.code.trimmingFinalNewline)
+        embed(.code(CodeBuilder.build(code, highlighted: context.highlights(code, rootSource: nil), style: style)))
     }
 
     mutating func visitHTMLBlock(_ html: HTMLBlock) {
@@ -134,7 +169,7 @@ struct ProseBuilder: MarkupWalker {
     }
 
     mutating func visitTable(_ table: Table) {
-        sourceParagraph(math.restoring(table.format()))
+        embed(.table(TableBuilder.build(table, style: style, color: color, math: math, reusing: [:])))
     }
 
     mutating func visitThematicBreak(_ thematicBreak: ThematicBreak) {
@@ -143,7 +178,7 @@ struct ProseBuilder: MarkupWalker {
         endParagraph()
     }
 
-    /// Code, HTML or a table inside a list or quote: monospaced, its lines kept in one paragraph.
+    /// HTML inside a list or quote: monospaced, its lines kept in one paragraph.
     private mutating func sourceParagraph(_ text: String) {
         beginParagraph(style.source)
         var source = attributes(font: font(style.source))
@@ -291,6 +326,7 @@ struct ProseBuilder: MarkupWalker {
 
     private mutating func beginParagraph(_ spec: FontSpec) {
         let gap = output.length == 0 ? 0 : pendingGap ?? style.style.blockSpacing * style.em
+        if output.length == 0, !items.isEmpty { outputGap = style.style.blockSpacing * style.em }
         pendingGap = nil
         if output.length > 0 { output.append(NSAttributedString(string: "\n", attributes: separatorAttributes)) }
         paragraphStart = output.length
@@ -302,6 +338,7 @@ struct ProseBuilder: MarkupWalker {
         paragraph.paragraphSpacingBefore = gap
         paragraph.firstLineHeadIndent = indent
         paragraph.headIndent = indent
+        paragraph.alignment = alignment
         if let marker = pendingMarker {
             pendingMarker = nil
             paragraph.firstLineHeadIndent = marker.start
@@ -328,7 +365,24 @@ struct ProseBuilder: MarkupWalker {
         headingLevel = nil
     }
 
-    /// An item whose first block is not text (a nested list, a quote, or nothing) gets its marker on a line of its own.
+    /// A code block or table at the current indent, after the text so far.
+    private mutating func embed(_ content: BlockContent) {
+        flushMarker()
+        let gap = output.length == 0 && items.isEmpty ? 0 : style.style.blockSpacing * style.em
+        pendingGap = nil
+        cut()
+        items.append(StackItem(id: items.count, gap: gap, indent: indent, content: content))
+    }
+
+    /// Ends the text so far as a piece of its own.
+    private mutating func cut() {
+        guard output.length > 0 else { return }
+        items.append(StackItem(id: items.count, gap: outputGap, indent: 0, content: .text(RichText(output))))
+        output = NSMutableAttributedString()
+    }
+
+    /// An item whose first block is not text (a nested list, a quote, a code block, or nothing) gets its marker on a line
+    /// of its own.
     private mutating func flushMarker() {
         guard pendingMarker != nil else { return }
         beginParagraph(style.body)

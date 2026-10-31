@@ -51,6 +51,8 @@ final class ResolvedStyle: @unchecked Sendable {
     let body: FontSpec
     let headings: [FontSpec]
     let source: FontSpec
+    let table: FontSpec
+    let tableHeader: FontSpec
     /// The body font's size, the unit of the style's spacing.
     let em: CGFloat
     let text: PlatformColor
@@ -58,6 +60,7 @@ final class ResolvedStyle: @unchecked Sendable {
     let link: PlatformColor
     let inlineCodeBackground: PlatformColor
     let quoteText: PlatformColor
+    private let codeColors: [CodeTokenKind: PlatformColor]
 
     init(_ environment: RenderEnvironment) {
         self.environment = environment
@@ -65,12 +68,30 @@ final class ResolvedStyle: @unchecked Sendable {
         body = Self.spec(style.body, environment.dynamicTypeSize)
         headings = (1...6).map { Self.spec(style.heading($0), environment.dynamicTypeSize) }
         source = Self.spec(style.source, environment.dynamicTypeSize)
+        table = Self.spec(style.table, environment.dynamicTypeSize)
+        tableHeader = Self.spec(style.tableHeader, environment.dynamicTypeSize)
         em = body.size
         text = PlatformColor(style.textColor)
         secondaryText = PlatformColor(style.secondaryTextColor)
         link = PlatformColor(style.linkColor)
         inlineCodeBackground = PlatformColor(style.inlineCodeBackground)
         quoteText = PlatformColor(style.quoteTextColor)
+        let colors = style.codeColors
+        codeColors = Dictionary(uniqueKeysWithValues: CodeTokenKind.allCases.map { kind in
+            let color = switch kind {
+            case .keyword: colors.keyword
+            case .string: colors.string
+            case .comment: colors.comment
+            case .number: colors.number
+            case .type: colors.type
+            case .function, .property: colors.function
+            case .attribute: colors.attribute
+            case .variable: colors.variable
+            case .inserted: colors.inserted
+            case .deleted: colors.deleted
+            }
+            return (kind, PlatformColor(color))
+        })
     }
 
     static let standard = ResolvedStyle(RenderEnvironment())
@@ -78,6 +99,8 @@ final class ResolvedStyle: @unchecked Sendable {
     var style: StreamMarkdownStyle { environment.style }
 
     func heading(_ level: Int) -> FontSpec { headings[min(max(level, 1), 6) - 1] }
+
+    func codeColor(_ kind: CodeTokenKind) -> PlatformColor { codeColors[kind] ?? text }
 
     private static func spec(_ token: StreamMarkdownStyle.FontToken, _ size: DynamicTypeSize) -> FontSpec {
         FontSpec(size: (pointSize(token.textStyle, size) * token.scale).rounded(toPlaces: 1), design: token.design, weight: token.weight.platform)
