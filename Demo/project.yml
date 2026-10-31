@@ -1,0 +1,48 @@
+# The demo app's Xcode project; scripts/demo.sh generates it with xcodegen (the repo ignores *.xcodeproj).
+name: StreamMarkdownDemo
+options:
+  bundleIdPrefix: com.celve
+settings:
+  base:
+    # A setting of its own, so a per-issue install can rename the app without renaming package resource bundles.
+    DEMO_BUNDLE_ID: com.celve.streammarkdown.demo
+    CODE_SIGN_IDENTITY: "-"
+    SWIFT_VERSION: "6.0"
+    GENERATE_INFOPLIST_FILE: YES
+packages:
+  StreamMarkdown:
+    path: ..
+targets:
+  StreamMarkdownDemo:
+    type: application
+    platform: iOS
+    deploymentTarget: "27.1"
+    sources:
+      - path: Sources
+      - path: Answers
+        type: folder
+    dependencies:
+      - package: StreamMarkdown
+    settings:
+      INFOPLIST_KEY_UILaunchScreen_Generation: YES
+      INFOPLIST_KEY_UISupportedInterfaceOrientations: UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight
+      INFOPLIST_KEY_CFBundleDisplayName: StreamMarkdown
+      PRODUCT_BUNDLE_IDENTIFIER: $(DEMO_BUNDLE_ID)
+  StreamMarkdownDemoUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    deploymentTarget: "27.1"
+    sources: [UITests]
+    dependencies:
+      - target: StreamMarkdownDemo
+    settings:
+      PRODUCT_BUNDLE_IDENTIFIER: $(DEMO_BUNDLE_ID).uitests
+      TEST_TARGET_NAME: StreamMarkdownDemo
+schemes:
+  StreamMarkdownDemo:
+    build:
+      targets:
+        StreamMarkdownDemo: all
+        StreamMarkdownDemoUITests: [test]
+    test:
+      targets: [StreamMarkdownDemoUITests]
