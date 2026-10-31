@@ -86,6 +86,11 @@ struct MarkdownStreamTests {
         ["Ends here", "Ends here  ", "Ends here  \nand goes on"],
         ["<div>", "<div>  \n\nText"],
         ["| a |\n|---|\n| 1 |", "| a |\n|---|\n| 1 |  \n\nText"],
+        ["$$\n- x", "$$\n- x^2\n$$", "$$\n- x^2\n$$\n\nAfter $y$."],
+        ["Cost $5 and", "Cost $5 and x$", "Cost $5 and x$ more"],
+        ["Then\n\\[", "Then\n\\[\nx\n\\]", "Then\n\\[\nx\n\\]\nand"],
+        ["- a $x", "- a $x$\n\n  $$\n  y", "- a $x$\n\n  $$\n  y\n  $$"],
+        ["> $$\n> a", "> $$\n> a\n> $$"],
     ])
     func chunksRenderAsTheWholeTextDoes(_ steps: [String]) async throws {
         let stream = MarkdownStream()
@@ -99,6 +104,36 @@ struct MarkdownStreamTests {
         #expect(stream.blocks.map(\.kind) == fresh.blocks.map(\.kind))
         for (streamed, whole) in zip(stream.blocks, fresh.blocks) {
             #expect(Rendered(streamed.content) == Rendered(whole.content), "block \(streamed.id) after \(steps)")
+        }
+    }
+
+    @Test func publishedBlocksDrawTheirFormulas() async throws {
+        let stream = MarkdownStream()
+        stream.update(text: "Rank $r$ here.\n\n$$\nx^2\n$$")
+        await stream.settled()
+        #expect(stream.blocks.map(\.kind) == [.paragraph, .displayMath])
+        let paragraph = try text(stream.blocks[0])
+        #expect(paragraph.string == "Rank \u{FFFC} here.")
+        #expect((paragraph.attribute(.attachment, at: 5, effectiveRange: nil) as? MathAttachment)?.tex == "r")
+        guard case .math(let formulas) = stream.blocks[1].content else { throw Failure.notText }
+        #expect(formulas.map(\.tex) == ["x^2"])
+        #expect(formulas.allSatisfy { $0.rendered != nil })
+    }
+
+    @Test func aMathAnswerStreamedInSmallStepsEndsAsItParsesWhole() async throws {
+        let stream = MarkdownStream()
+        let text = MathExtractorTests.lora
+        for end in stride(from: 5, through: text.count + 4, by: 5) {
+            stream.update(text: String(text.prefix(end)))
+            await stream.settled()
+        }
+        let fresh = MarkdownStream()
+        fresh.update(text: text)
+        await fresh.settled()
+        #expect(stream.blocks.map(\.kind) == fresh.blocks.map(\.kind))
+        #expect(stream.blocks.contains { $0.kind == .displayMath })
+        for (streamed, whole) in zip(stream.blocks, fresh.blocks) {
+            #expect(Rendered(streamed.content) == Rendered(whole.content), "block \(streamed.id)")
         }
     }
 
@@ -158,7 +193,7 @@ struct MarkdownStreamTests {
 
 /// What a block draws, compared by value.
 private enum Rendered: Equatable {
-    case text(NSAttributedString), quote([Rendered]), rule, source(NSAttributedString)
+    case text(NSAttributedString), quote([Rendered]), rule, source(NSAttributedString), math([String])
 
     init(_ content: BlockContent) {
         switch content {
@@ -166,6 +201,7 @@ private enum Rendered: Equatable {
         case .quote(let blocks): self = .quote(blocks.map { Rendered($0.content) })
         case .rule: self = .rule
         case .source(let text): self = .source(text.string)
+        case .math(let formulas): self = .math(formulas.map(\.tex))
         }
     }
 }

@@ -9,6 +9,8 @@ public enum BlockKind: Hashable, Sendable {
     case blockQuote
     case thematicBreak
     case codeBlock(language: String?)
+    /// A paragraph of display formulas and nothing else.
+    case displayMath
     case table
     case html
     /// Anything else swift-markdown may produce, drawn as its source.
@@ -28,6 +30,10 @@ public enum BlockKind: Hashable, Sendable {
         default: self = .other
         }
     }
+
+    init(_ markup: Markup, math: MathTable) {
+        self = math.isDisplayOnly(markup) ? .displayMath : BlockKind(markup)
+    }
 }
 
 /// A root block of one parse: its place among the root blocks, its kind, where its source lies, and its parsed tree.
@@ -38,8 +44,10 @@ struct ParsedBlock {
     let range: Range<Int>
     let source: String
     let markup: Markup
+    /// The formulas of the parse, which the markup's text names by placeholder.
+    let math: MathTable
 
-    var key: BlockKey { BlockKey(kind: kind, inputs: BlockRenderer.inputs(markup, kind: kind, source: source)) }
+    var key: BlockKey { BlockKey(kind: kind, inputs: BlockRenderer.inputs(markup, kind: kind, source: source, math: math)) }
 }
 
 /// Everything a block's rendering reads besides the style: two blocks with equal keys render alike.
@@ -50,13 +58,14 @@ struct BlockKey: Hashable, Sendable {
 
 enum BlockParser {
     /// The answer's root blocks, parsed whole by cmark-gfm so every block sees the answer's link reference definitions.
+    /// Formulas are taken out first, so cmark never reads TeX as Markdown; ranges and sources are still the answer's.
     static func parse(_ text: String) -> [ParsedBlock] {
-        let document = Document(parsing: text, options: [.disableSmartOpts])
-        let lines = LineStarts(text)
-        let bytes = Array(text.utf8)
+        let extraction = MathExtractor.extract(text)
+        let lines = LineStarts(extraction.text)
+        let bytes = Array(extraction.text.utf8)
         var blocks: [ParsedBlock] = []
         var previousEnd = 0
-        for markup in document.children {
+        for markup in extraction.document.children {
             let range: Range<Int>
             if let sourceRange = markup.range {
                 let start = max(lines.lineStart(of: sourceRange.lowerBound.line), previousEnd)
@@ -68,9 +77,11 @@ enum BlockParser {
                 range = previousEnd..<previousEnd
             }
             previousEnd = range.upperBound
+            let answerRange = extraction.answerOffset(range.lowerBound)..<extraction.answerOffset(range.upperBound)
             let utf8 = text.utf8
-            let source = String(text[utf8.index(utf8.startIndex, offsetBy: range.lowerBound)..<utf8.index(utf8.startIndex, offsetBy: range.upperBound)])
-            blocks.append(ParsedBlock(index: blocks.count, kind: BlockKind(markup), range: range, source: source, markup: markup))
+            let source = String(text[utf8.index(utf8.startIndex, offsetBy: answerRange.lowerBound)..<utf8.index(utf8.startIndex, offsetBy: answerRange.upperBound)])
+            let kind = BlockKind(markup, math: extraction.math)
+            blocks.append(ParsedBlock(index: blocks.count, kind: kind, range: answerRange, source: source, markup: markup, math: extraction.math))
         }
         return blocks
     }

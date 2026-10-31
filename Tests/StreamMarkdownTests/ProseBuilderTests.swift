@@ -116,7 +116,7 @@ struct ProseBuilderTests {
     @Test func quotesRenderTheirOwnBlocks() throws {
         let document = Document(parsing: "> First\n>\n> - item\n>\n> ---")
         let quote = try #require(document.child(at: 0))
-        guard case .quote(let blocks) = BlockRenderer.render(quote, kind: .blockQuote, source: "", style: style) else {
+        guard case .quote(let blocks) = BlockRenderer.render(quote, kind: .blockQuote, source: "", style: style, math: .empty) else {
             Issue.record("not a quote")
             return
         }
@@ -139,12 +139,12 @@ struct ProseBuilderTests {
     private func build(_ markdown: String) -> RichText {
         let document = Document(parsing: markdown, options: [.disableSmartOpts])
         let block = document.child(at: 0) ?? document
-        return ProseBuilder.build(block, style: style)
+        return ProseBuilder.build(block, style: style, math: .empty)
     }
 
     private func render(_ markdown: String, kind: BlockKind) throws -> RichText {
         let markup = try #require(Document(parsing: markdown).child(at: 0))
-        guard case .source(let text) = BlockRenderer.render(markup, kind: kind, source: markdown, style: style) else {
+        guard case .source(let text) = BlockRenderer.render(markup, kind: kind, source: markdown, style: style, math: .empty) else {
             throw RenderError.notSource
         }
         return text
