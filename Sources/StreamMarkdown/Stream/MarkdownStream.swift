@@ -183,6 +183,8 @@ final class MarkdownStream {
         schedule()
     }
 
+    var isParsing: Bool { job != nil }
+
     /// Returns once no parse is running, waiting or unpublished.
     func settled() async {
         guard job != nil || pending != nil else { return }
