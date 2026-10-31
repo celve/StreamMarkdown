@@ -10,11 +10,12 @@ let package = Package(
     ],
     dependencies: [
         .package(url: "https://github.com/swiftlang/swift-markdown.git", from: "0.9.0"),
+        .package(url: "https://github.com/mgriebling/SwiftMath.git", from: "1.7.3"),
     ],
     targets: [
         .target(
             name: "StreamMarkdown",
-            dependencies: [.product(name: "Markdown", package: "swift-markdown")]
+            dependencies: [.product(name: "Markdown", package: "swift-markdown"), "SwiftMath"]
         ),
         .testTarget(name: "StreamMarkdownTests", dependencies: ["StreamMarkdown"]),
     ]

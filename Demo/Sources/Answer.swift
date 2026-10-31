@@ -12,6 +12,8 @@ struct Answer: Identifiable, Hashable {
             ("follow-up", "Follow-up work"),
             ("showcase", "Every prose block"),
             ("lora", "LoRA: math, table, code"),
+            ("attention", "Attention: heavy math"),
+            ("math-edge", "Math edge cases"),
         ]
         let answers = titles.map { id, title in Answer(id: id, title: title, text: load(id)) }
         return answers + [Answer(id: "long", title: "Long answer (10k)", text: longSample)]

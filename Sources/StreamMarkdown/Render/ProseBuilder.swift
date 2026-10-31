@@ -9,6 +9,7 @@ import AppKit
 
 /// Builds one prose block (a paragraph, a heading or a whole list) into an attributed string for one text view.
 /// Each paragraph inside it gets its own indents and spacing; list markers sit right-aligned on a tab before the text.
+/// Formulas become SwiftMath images; a display formula takes a line of its own.
 struct ProseBuilder: MarkupWalker {
 
     private struct Marker {
@@ -19,6 +20,7 @@ struct ProseBuilder: MarkupWalker {
     }
 
     private let style: ResolvedStyle
+    private let math: MathTable
     private let output = NSMutableAttributedString()
     private var fonts: [FontSpec: PlatformFont] = [:]
 
@@ -30,6 +32,10 @@ struct ProseBuilder: MarkupWalker {
     /// The space above the next paragraph, when a container sets one; otherwise the style's block spacing.
     private var pendingGap: CGFloat?
     private var paragraphStart = 0
+    /// Where the paragraph's own content starts, after any list marker.
+    private var contentStart = 0
+    /// Set after a display formula: what follows in the paragraph starts a new line.
+    private var breakBeforeNext = false
     private var paragraphStyle = NSParagraphStyle()
     private var separatorAttributes: [NSAttributedString.Key: Any] = [:]
     private var headingLevel: Int?
@@ -39,21 +45,22 @@ struct ProseBuilder: MarkupWalker {
     private var strikethrough = false
     private var link: URL?
 
-    private init(style: ResolvedStyle, color: PlatformColor?) {
+    private init(style: ResolvedStyle, color: PlatformColor?, math: MathTable) {
         self.style = style
         self.color = color ?? style.text
+        self.math = math
         blockFont = style.body
     }
 
-    static func build(_ markup: Markup, style: ResolvedStyle, color: PlatformColor? = nil) -> RichText {
-        var builder = ProseBuilder(style: style, color: color)
+    static func build(_ markup: Markup, style: ResolvedStyle, color: PlatformColor? = nil, math: MathTable = .empty) -> RichText {
+        var builder = ProseBuilder(style: style, color: color, math: math)
         builder.visit(markup)
         return RichText(builder.output, headingLevel: (markup as? Heading)?.level)
     }
 
     /// Text drawn as it is, in the style's monospaced source font.
     static func source(_ text: String, style: ResolvedStyle) -> RichText {
-        var builder = ProseBuilder(style: style, color: nil)
+        var builder = ProseBuilder(style: style, color: nil, math: .empty)
         builder.beginParagraph(style.source)
         builder.append(text, font: builder.font(style.source))
         builder.endParagraph()
@@ -127,7 +134,7 @@ struct ProseBuilder: MarkupWalker {
     }
 
     mutating func visitTable(_ table: Table) {
-        sourceParagraph(table.format())
+        sourceParagraph(math.restoring(table.format()))
     }
 
     mutating func visitThematicBreak(_ thematicBreak: ThematicBreak) {
@@ -148,7 +155,12 @@ struct ProseBuilder: MarkupWalker {
     // MARK: Inlines
 
     mutating func visitText(_ text: Text) {
-        append(text.string, font: currentFont())
+        for segment in math.segments(text.string) {
+            switch segment {
+            case .text(let run): append(String(run), font: currentFont())
+            case .math(let span): appendMath(span)
+            }
+        }
     }
 
     mutating func visitEmphasis(_ emphasis: Emphasis) {
@@ -173,10 +185,40 @@ struct ProseBuilder: MarkupWalker {
     }
 
     mutating func visitInlineCode(_ inlineCode: InlineCode) {
+        appendCode(inlineCode.code)
+    }
+
+    private mutating func appendCode(_ text: String) {
+        lineBreakAfterDisplay()
         let spec = FontSpec(size: (blockFont.size * style.style.inlineCodeScale).rounded(), design: .monospaced, weight: bold ? FontSpec.boldWeight : 0)
         var code = attributes(font: font(spec))
         code[.backgroundColor] = style.inlineCodeBackground
-        output.append(NSAttributedString(string: inlineCode.code, attributes: code))
+        output.append(NSAttributedString(string: text, attributes: code))
+    }
+
+    /// A formula as an image on the text's baseline, sized from the text around it; one SwiftMath cannot draw shows its
+    /// source as code. A display formula sits on a line of its own.
+    private mutating func appendMath(_ span: MathSpan) {
+        if span.isDisplay, output.length > contentStart, output.mutableString.character(at: output.length - 1) != 0x2028 {
+            output.append(NSAttributedString(string: "\u{2028}", attributes: attributes(font: currentFont())))
+            breakBeforeNext = false
+        }
+        let size = blockFont.size * style.style.mathScale
+        if let rendered = MathRenderer.render(span.tex, fontSize: size, display: span.isDisplay) {
+            lineBreakAfterDisplay()
+            var attachment = attributes(font: currentFont())
+            attachment[.attachment] = MathAttachment(rendered, tex: span.label)
+            output.append(NSAttributedString(string: "\u{FFFC}", attributes: attachment))
+        } else {
+            appendCode(span.source)
+        }
+        if span.isDisplay { breakBeforeNext = true }
+    }
+
+    private mutating func lineBreakAfterDisplay() {
+        guard breakBeforeNext else { return }
+        breakBeforeNext = false
+        output.append(NSAttributedString(string: "\u{2028}", attributes: attributes(font: currentFont())))
     }
 
     mutating func visitLink(_ link: Link) {
@@ -237,7 +279,13 @@ struct ProseBuilder: MarkupWalker {
         return attributes
     }
 
-    private func append(_ string: String, font: PlatformFont, color: PlatformColor? = nil) {
+    private mutating func append(_ string: String, font: PlatformFont, color: PlatformColor? = nil) {
+        var string = string
+        if breakBeforeNext {
+            string = String(string.drop { $0.isWhitespace })
+            guard !string.isEmpty else { return }
+            lineBreakAfterDisplay()
+        }
         output.append(NSAttributedString(string: string, attributes: attributes(font: font, color: color)))
     }
 
@@ -246,6 +294,7 @@ struct ProseBuilder: MarkupWalker {
         pendingGap = nil
         if output.length > 0 { output.append(NSAttributedString(string: "\n", attributes: separatorAttributes)) }
         paragraphStart = output.length
+        breakBeforeNext = false
         blockFont = spec
         headingLevel = nil
         let paragraph = NSMutableParagraphStyle()
@@ -264,6 +313,7 @@ struct ProseBuilder: MarkupWalker {
             let markerFont = font(FontSpec(size: style.body.size, design: style.body.design, weight: style.body.weight))
             output.append(NSAttributedString(string: "\t\(marker.text)\t", attributes: [.font: markerFont, .foregroundColor: color]))
         }
+        contentStart = output.length
         paragraphStyle = paragraph
     }
 

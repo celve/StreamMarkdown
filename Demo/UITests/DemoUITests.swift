@@ -1,7 +1,7 @@
 import XCTest
 
 /// Checks on the demo that need a simulator: links reach `openURL`, one block holds a selection, headings carry the
-/// header trait, and screenshots of the showcase. Shots go to `SHOTS_DIR` with `SHOTS_SUFFIX`, passed with a `TEST_RUNNER_` prefix.
+/// header trait, formulas read as their TeX, and screenshots of the showcase and the math answers. Shots go to `SHOTS_DIR` with `SHOTS_SUFFIX`, passed with a `TEST_RUNNER_` prefix.
 @MainActor
 final class DemoUITests: XCTestCase {
     private var app: XCUIApplication!
@@ -64,6 +64,47 @@ final class DemoUITests: XCTestCase {
         app.swipeUp(velocity: .slow)
         app.swipeUp(velocity: .slow)
         shoot("showcase-end")
+    }
+
+    func testMathIsLabelledWithItsTeX() {
+        relaunch(answer: "attention")
+        let formulas = app.descendants(matching: .any).matching(identifier: "math")
+        let attention = formulas.firstMatch
+        XCTAssertTrue(attention.waitForExistence(timeout: 10))
+        XCTAssertEqual(attention.label, #"\operatorname{Attention}(Q, K, V) = \operatorname{softmax}\left(\frac{QK^\top}{\sqrt{d_k}}\right) V"#)
+        let paragraph = app.textViews.element(boundBy: 1)
+        let value = paragraph.value as? String ?? ""
+        XCTAssertTrue(value.contains(#"q_i \in \mathbb{R}^{d_k}"#), "inline formulas read as their TeX: \(value)")
+    }
+
+    func testWideDisplayMathScrollsInsideTheColumn() {
+        relaunch(answer: "attention")
+        let loss = app.descendants(matching: .any).matching(NSPredicate(format: "identifier == 'math' AND label BEGINSWITH '\\\\mathcal{L}'")).firstMatch
+        for _ in 0..<6 where !loss.exists || !loss.isHittable { app.swipeUp(velocity: .slow) }
+        XCTAssertTrue(loss.waitForExistence(timeout: 5))
+        let window = app.windows.firstMatch.frame
+        XCTAssertLessThanOrEqual(loss.frame.maxX, window.maxX + 1, "the formula's view stays within the window: \(loss.frame)")
+        shoot("math-wide")
+        loss.swipeLeft(velocity: .slow)
+        shoot("math-wide-scrolled")
+    }
+
+    func testMathShots() {
+        for answer in ["attention", "math-edge"] {
+            relaunch(answer: answer)
+            shoot("\(answer)-1")
+            for page in 2...4 {
+                app.swipeUp(velocity: .slow)
+                shoot("\(answer)-\(page)")
+            }
+        }
+    }
+
+    private func relaunch(answer: String) {
+        app.terminate()
+        app.launchArguments = ["-answer", answer, "-rate", "0", "-hud", "0"]
+        app.launch()
+        XCTAssertTrue(app.textViews.firstMatch.waitForExistence(timeout: 20))
     }
 
     private func shoot(_ name: String) {
