@@ -149,6 +149,17 @@ struct MathExtractorTests {
         "Inline \\(a\\) and $b$.\n\n$$\n\\begin{aligned}\nx &= 1\n\n\\\\ y &= 2\n\\end{aligned}\n$$\n\nPrice: $5 and $6.",
     ]
 
+    /// Ask's answers with reference links resolve as cmark reads the whole answer, wherever the definition sits.
+    @Test func referenceLinksInAsksAnswersResolveAcrossBlocks() {
+        for answer in [1, 2, 7, 8, 9].map({ Self.lin2404Answers[$0] }) {
+            let use = BlockParser.parse(answer).first { $0.source.contains("[the paper][p]") }
+            #expect(use?.key.inputs.contains("https://arxiv.org/abs/2106.09685") == true, "\(answer)")
+        }
+        let fake = BlockParser.parse(Self.lin2404Answers[10])
+        #expect(fake[0].source == "Read [paper][p].")
+        #expect(!fake[0].key.inputs.contains("example.org"), "a definition inside code is code")
+    }
+
     @Test func aDollarPairInInlineCodeDoesNotSwallowTheEquationAfterIt() {
         let text = "Use `$$` for display math:\n\n$$\n- x^2\n$$"
         let blocks = BlockParser.parse(text)
