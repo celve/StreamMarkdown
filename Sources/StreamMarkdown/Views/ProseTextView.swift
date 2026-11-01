@@ -24,10 +24,10 @@ struct ProseTextView: UIViewRepresentable {
         let coordinator = context.coordinator
         coordinator.openURL = context.environment.openURL
         coordinator.selection = selection
-        let linkColor = UIColor(style.linkColor)
-        if coordinator.linkColor != linkColor {
-            coordinator.linkColor = linkColor
-            view.linkTextAttributes = [.foregroundColor: linkColor]
+        let linkAttributes = Self.linkAttributes(style)
+        if coordinator.linkAttributes != linkAttributes {
+            coordinator.linkAttributes = linkAttributes
+            view.linkTextAttributes = linkAttributes.dictionary
         }
         guard coordinator.shown !== text else { return }
         let previous = coordinator.shown
@@ -45,6 +45,20 @@ struct ProseTextView: UIViewRepresentable {
         StreamMarkdownDiagnostics.textViewUpdates += 1
     }
 
+    struct LinkAttributes: Equatable {
+        var color: UIColor
+        var underline: UIColor?
+
+        var dictionary: [NSAttributedString.Key: Any] {
+            guard let underline else { return [.foregroundColor: color] }
+            return [.foregroundColor: color, .underlineStyle: NSUnderlineStyle.single.rawValue, .underlineColor: underline]
+        }
+    }
+
+    static func linkAttributes(_ style: StreamMarkdownStyle) -> LinkAttributes {
+        LinkAttributes(color: UIColor(style.linkColor), underline: style.linkUnderlineColor.map { UIColor($0) })
+    }
+
     func sizeThatFits(_ proposal: ProposedViewSize, uiView: ProseUITextView, context: Context) -> CGSize? {
         let width = proposal.width ?? .greatestFiniteMagnitude
         if let size = context.coordinator.sizes[width] { return size }
@@ -59,7 +73,7 @@ struct ProseTextView: UIViewRepresentable {
     final class Coordinator: TextViewActions {
         var shown: RichText?
         var sizes: [CGFloat: CGSize] = [:]
-        var linkColor: UIColor?
+        var linkAttributes: LinkAttributes?
         var baseTraits: UIAccessibilityTraits = []
     }
 }
@@ -78,6 +92,7 @@ extension UITextView {
         view.adjustsFontForContentSizeCategory = false
         view.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         view.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        view.textLayoutManager?.delegate = InlineCodeLayout.shared
         view.delegate = delegate
         StreamMarkdownDiagnostics.textViews += 1
         StreamMarkdownDiagnostics.liveTextViews.add(view)

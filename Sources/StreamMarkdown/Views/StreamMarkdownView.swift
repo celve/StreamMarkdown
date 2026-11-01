@@ -112,6 +112,7 @@ struct BlockContentView: View {
     let content: BlockContent
     @Environment(\.streamMarkdownStyle) private var style
     @Environment(\.streamMarkdownEm) private var em
+    @Environment(\.displayScale) private var displayScale
     @Environment(\.streamMarkdownFadesIn) private var fadesIn
     @Environment(\.streamMarkdownStream) private var stream
 
@@ -138,7 +139,7 @@ struct BlockContentView: View {
         case .rule:
             Rectangle()
                 .fill(style.ruleColor)
-                .frame(height: 1)
+                .frame(height: 1 / max(displayScale, 1))
                 .padding(.vertical, em * 0.5)
                 .accessibilityHidden(true)
         case .code(let code):
@@ -171,12 +172,13 @@ struct SourceView: View {
     let text: RichText
     @Environment(\.streamMarkdownStyle) private var style
     @Environment(\.streamMarkdownEm) private var em
+    @Environment(\.displayScale) private var displayScale
 
     var body: some View {
         ProseTextView(text: text, fades: false)
             .padding(em * 0.75)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(style.sourceBackground, in: .rect(cornerRadius: em * 0.6))
+            .sourceBox(style: style, em: em, displayScale: displayScale)
     }
 }
 

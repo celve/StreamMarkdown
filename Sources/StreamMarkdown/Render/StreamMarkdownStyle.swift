@@ -19,12 +19,12 @@ public struct StreamMarkdownStyle: Hashable, Sendable {
     }
 
     public var body = FontToken(.body, design: .serif)
-    /// Levels 1 to 6; a level past the end takes the last.
+    /// Levels 1 to 6; a level past the end takes the last. In the body's face and scaled from it, as Claude sets them.
     public var headings = [
-        FontToken(.title2, weight: .semibold),
-        FontToken(.title3, weight: .semibold),
-        FontToken(.headline, weight: .semibold),
-        FontToken(.subheadline, weight: .semibold),
+        FontToken(.body, design: .serif, weight: .semibold, scale: 1.3),
+        FontToken(.body, design: .serif, weight: .semibold, scale: 1.15),
+        FontToken(.body, design: .serif, weight: .semibold),
+        FontToken(.callout, design: .serif, weight: .semibold),
     ]
     /// Inline code's size as a multiple of the text around it; the face is monospaced.
     public var inlineCodeScale: CGFloat = 0.88
@@ -33,36 +33,57 @@ public struct StreamMarkdownStyle: Hashable, Sendable {
     /// Code blocks, and HTML drawn as its source.
     public var source = FontToken(.footnote, design: .monospaced)
     /// Table cells, and header cells.
-    public var table = FontToken(.callout, design: .serif)
-    public var tableHeader = FontToken(.callout, design: .serif, weight: .semibold)
+    public var table = FontToken(.subheadline, design: .serif)
+    public var tableHeader = FontToken(.subheadline, design: .serif, weight: .semibold)
 
     /// Extra space between the lines of a paragraph, in ems of its font.
-    public var lineSpacing: CGFloat = 0.25
+    public var lineSpacing: CGFloat = 0.32
     /// Between blocks, in ems of the body font.
-    public var blockSpacing: CGFloat = 0.75
-    public var headingSpacingBefore: CGFloat = 1.25
-    public var headingSpacingAfter: CGFloat = 0.4
-    public var listItemSpacing: CGFloat = 0.35
+    public var blockSpacing: CGFloat = 0.9
+    public var headingSpacingBefore: CGFloat = 1.3
+    public var headingSpacingAfter: CGFloat = 0.35
+    public var listItemSpacing: CGFloat = 0.2
     /// How far each list level indents its items, in ems of the body font.
-    public var listIndent: CGFloat = 1.6
+    public var listIndent: CGFloat = 1.75
     /// The gap between a block quote's bar and its blocks, in ems of the body font.
-    public var quoteIndent: CGFloat = 0.8
+    public var quoteIndent: CGFloat = 1
     /// In points.
-    public var quoteBarWidth: CGFloat = 3
+    public var quoteBarWidth: CGFloat = 4
     /// How wide a table column grows before its body cells wrap, in ems of the body font. Header cells never wrap.
     public var tableColumnMaxWidth: CGFloat = 14
+    /// Above and below a table cell's text, in ems of the body font.
+    public var tableCellVerticalPadding: CGFloat = 0.5
+    /// After each table column's text, in ems of the body font; the first column starts at the table's edge.
+    public var tableColumnSpacing: CGFloat = 1
+    /// The corner radius of inline code's chip, in ems of the text around it.
+    public var inlineCodeCornerRadius: CGFloat = 0.35
+    /// The corner radius of code blocks and HTML, in ems of the body font.
+    public var sourceCornerRadius: CGFloat = 0.5
 
     public var textColor = SystemColor.label
     public var secondaryTextColor = SystemColor.secondaryLabel
-    public var linkColor = Color.accentColor
-    public var inlineCodeBackground = SystemColor.fill
-    public var quoteTextColor = SystemColor.secondaryLabel
-    public var quoteBarColor = SystemColor.tertiaryLabel
-    public var ruleColor = SystemColor.separator
-    /// Behind code blocks and HTML.
-    public var sourceBackground = SystemColor.fill
-    public var tableBorderColor = SystemColor.separator
-    public var tableHeaderBackground = SystemColor.fill
+    public var linkColor = SystemColor.label
+    /// The line under links; nil draws none.
+    public var linkUnderlineColor: Color? = SystemColor.label(opacity: 0.4)
+    /// Inline code's text; nil takes the colour of the text around it.
+    public var inlineCodeColor: Color? = SystemColor.adaptive(light: 0x8A2424, dark: 0xFE8181)
+    public var inlineCodeBackground = SystemColor.label(opacity: 0.05)
+    /// The hairline around inline code's chip. Table cells draw only the background.
+    public var inlineCodeBorderColor = SystemColor.label(opacity: 0.2)
+    public var quoteTextColor = SystemColor.label(opacity: 0.8)
+    public var quoteBarColor = SystemColor.label(opacity: 0.15)
+    public var ruleColor = SystemColor.label(opacity: 0.15)
+    /// Behind code blocks and HTML: a little lighter than the page, as Claude draws them.
+    public var sourceBackground = SystemColor.adaptive(light: 0xFFFFFF, dark: 0x30302E, opacity: 0.5)
+    /// The hairline around code blocks and HTML.
+    public var sourceBorderColor = SystemColor.label(opacity: 0.15)
+    /// The hairlines between a table's body rows.
+    public var tableBorderColor = SystemColor.label(opacity: 0.15)
+    /// The hairline under a table's header row.
+    public var tableHeaderRuleColor = SystemColor.label(opacity: 0.4)
+    /// The hairline around a table; clear draws none.
+    public var tableFrameColor = Color.clear
+    public var tableHeaderBackground = Color.clear
     /// Code's colours by token.
     public var codeColors = CodeColors.xcode
 
@@ -138,9 +159,14 @@ public enum SystemColor {
     public static let separator = Color(uiColor: .separator)
     public static let fill = Color(uiColor: .tertiarySystemFill)
 
+    /// The label colour at an opacity, so a fill or line takes the tint of what it sits on.
+    public static func label(opacity: CGFloat) -> Color {
+        Color(uiColor: UIColor { UIColor.label.resolvedColor(with: $0).withAlphaComponent(opacity) })
+    }
+
     /// One colour in light appearance and another in dark, each as 0xRRGGBB.
-    public static func adaptive(light: UInt32, dark: UInt32) -> Color {
-        Color(uiColor: UIColor { $0.userInterfaceStyle == .dark ? UIColor(rgb: dark) : UIColor(rgb: light) })
+    public static func adaptive(light: UInt32, dark: UInt32, opacity: CGFloat = 1) -> Color {
+        Color(uiColor: UIColor { ($0.userInterfaceStyle == .dark ? UIColor(rgb: dark) : UIColor(rgb: light)).withAlphaComponent(opacity) })
     }
     #else
     public static let label = Color(nsColor: .labelColor)
@@ -149,8 +175,14 @@ public enum SystemColor {
     public static let separator = Color(nsColor: .separatorColor)
     public static let fill = Color(nsColor: .quaternaryLabelColor)
 
-    public static func adaptive(light: UInt32, dark: UInt32) -> Color {
-        Color(nsColor: NSColor(name: nil) { $0.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? NSColor(rgb: dark) : NSColor(rgb: light) })
+    public static func label(opacity: CGFloat) -> Color {
+        Color(nsColor: .labelColor.withAlphaComponent(opacity))
+    }
+
+    public static func adaptive(light: UInt32, dark: UInt32, opacity: CGFloat = 1) -> Color {
+        Color(nsColor: NSColor(name: nil) {
+            ($0.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? NSColor(rgb: dark) : NSColor(rgb: light)).withAlphaComponent(opacity)
+        })
     }
     #endif
 }

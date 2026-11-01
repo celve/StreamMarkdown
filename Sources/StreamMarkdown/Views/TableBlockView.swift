@@ -2,7 +2,7 @@
 import SwiftUI
 import UIKit
 
-/// A table as a grid in a horizontal scroll: a header row on a fill, hairlines between rows, a rounded border.
+/// A table as a grid in a horizontal scroll: a header row, hairlines between rows, and the style's fill and frame.
 struct TableBlockView: View {
     let table: TableContent
     @State private var width: CGFloat = 0
@@ -56,14 +56,19 @@ final class TableGridView: UIView {
         var cornerRadius: CGFloat
         var headerBackground: UIColor
         var border: UIColor
+        var headerRule: UIColor
+        var frame: UIColor
 
         init(style: StreamMarkdownStyle, em: CGFloat) {
-            padding = UIEdgeInsets(top: em * 0.4, left: em * 0.6, bottom: em * 0.4, right: em * 0.6)
+            let vertical = style.tableCellVerticalPadding * em
+            padding = UIEdgeInsets(top: vertical, left: 0, bottom: vertical, right: style.tableColumnSpacing * em)
             maxColumnWidth = style.tableColumnMaxWidth * em
             minColumnWidth = 6 * em
             cornerRadius = em * 0.5
             headerBackground = UIColor(style.tableHeaderBackground)
             border = UIColor(style.tableBorderColor)
+            headerRule = UIColor(style.tableHeaderRuleColor)
+            frame = UIColor(style.tableFrameColor)
         }
     }
 
@@ -151,7 +156,7 @@ final class TableGridView: UIView {
             rules.append(rule)
         }
         while rules.count > ruleCount { rules.removeLast().removeFromSuperview() }
-        rules.forEach { $0.backgroundColor = metrics.border }
+        for (index, rule) in rules.enumerated() { rule.backgroundColor = index == 0 ? metrics.headerRule : metrics.border }
         setNeedsLayout()
     }
 
@@ -206,7 +211,7 @@ final class TableGridView: UIView {
     }
 
     private func updateBorder() {
-        layer.borderColor = metrics?.border.resolvedColor(with: traitCollection).cgColor
+        layer.borderColor = metrics?.frame.resolvedColor(with: traitCollection).cgColor
     }
 
     private func grid(fitting fitWidth: CGFloat) -> Grid {

@@ -46,6 +46,8 @@ struct ProseBuilder: MarkupWalker {
     private var separatorAttributes: [NSAttributedString.Key: Any] = [:]
     private var headingLevel: Int?
     private var alignment = NSTextAlignment.natural
+    /// Off for table cells, whose labels draw only a plain background behind inline code.
+    private var drawsChips = true
 
     private var bold = false
     private var italic = false
@@ -83,6 +85,7 @@ struct ProseBuilder: MarkupWalker {
     static func cell(_ cell: Table.Cell?, header: Bool, alignment: Table.ColumnAlignment?, style: ResolvedStyle, color: PlatformColor?,
                      math: MathTable) -> RichText {
         var builder = ProseBuilder(style: style, color: color, math: math)
+        builder.drawsChips = false
         builder.alignment = switch alignment {
         case .left: .left
         case .center: .center
@@ -228,9 +231,22 @@ struct ProseBuilder: MarkupWalker {
     private mutating func appendCode(_ text: String) {
         lineBreakAfterDisplay()
         let spec = FontSpec(size: (blockFont.size * style.style.inlineCodeScale).rounded(), design: .monospaced, weight: bold ? FontSpec.boldWeight : 0)
-        var code = attributes(font: font(spec))
-        code[.backgroundColor] = style.inlineCodeBackground
+        var code = attributes(font: font(spec), color: style.inlineCodeText)
+        guard drawsChips, !text.isEmpty else {
+            code[.backgroundColor] = style.inlineCodeBackground
+            output.append(NSAttributedString(string: text, attributes: code))
+            return
+        }
+        let chip = style.inlineCodeChip(size: blockFont.size)
+        code[.streamMarkdownInlineCode] = chip
+        if output.length > contentStart, output.mutableString.character(at: output.length - 1) != 0x2028 { kernLastCharacter(by: chip.padding) }
         output.append(NSAttributedString(string: text, attributes: code))
+        kernLastCharacter(by: chip.padding)
+    }
+
+    /// Room for a chip: space after the last character so far.
+    private mutating func kernLastCharacter(by padding: CGFloat) {
+        output.addAttribute(.kern, value: padding, range: output.mutableString.rangeOfComposedCharacterSequence(at: output.length - 1))
     }
 
     /// A formula as an image on the text's baseline, sized from the text around it; one SwiftMath cannot draw shows its
@@ -309,11 +325,13 @@ struct ProseBuilder: MarkupWalker {
     private func attributes(font: PlatformFont, color: PlatformColor? = nil) -> [NSAttributedString.Key: Any] {
         var attributes: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: color ?? self.color]
         if strikethrough { attributes[.strikethroughStyle] = NSUnderlineStyle.single.rawValue }
-        if let link {
-            attributes[.link] = link
+        if let link { attributes[.link] = link }
+        if link != nil || linkPending {
             attributes[.foregroundColor] = style.link
-        } else if linkPending {
-            attributes[.foregroundColor] = style.link
+            if let underline = style.linkUnderline {
+                attributes[.underlineStyle] = NSUnderlineStyle.single.rawValue
+                attributes[.underlineColor] = underline
+            }
         }
         return attributes
     }

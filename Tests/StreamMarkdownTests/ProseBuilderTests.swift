@@ -22,7 +22,8 @@ struct ProseBuilderTests {
         let font = try #require(font(h2, at: 0))
         #expect(font.pointSize == style.heading(2).size)
         #expect(font.pointSize > style.body.size)
-        #expect(!font.fontName.contains("NewYork"), "headings are SF, as in the reader")
+        #expect(font.fontName.contains("NewYork"), "headings are in the answer's serif face, as Claude sets them")
+        #expect(font.fontDescriptor.symbolicTraits.contains(.bold))
         #expect(build("Text").headingLevel == nil)
     }
 
@@ -39,13 +40,47 @@ struct ProseBuilderTests {
         #expect(both.contains(.bold) && both.contains(.italic))
     }
 
-    @Test func inlineCodeIsMonospacedOnAFill() throws {
+    @Test func inlineCodeIsMonospacedOnAChip() throws {
         let text = build("Use `W_q` here")
         let code = try #require(font(text, at: 4))
         #expect(code.fontDescriptor.symbolicTraits.contains(.monoSpace))
         #expect(code.pointSize < style.body.size)
-        #expect(text.string.attribute(.backgroundColor, at: 4, effectiveRange: nil) as? NSColor == style.inlineCodeBackground)
-        #expect(text.string.attribute(.backgroundColor, at: 0, effectiveRange: nil) == nil)
+        #expect(color(text, at: 4) == style.inlineCodeText)
+        let chip = try #require(text.string.attribute(.streamMarkdownInlineCode, at: 4, effectiveRange: nil) as? InlineCodeChip)
+        #expect(chip.fill == style.inlineCodeBackground)
+        #expect(text.string.attribute(.streamMarkdownInlineCode, at: 0, effectiveRange: nil) == nil)
+        #expect(text.string.attribute(.backgroundColor, at: 4, effectiveRange: nil) == nil)
+        #expect(text.string.attribute(.kern, at: 3, effectiveRange: nil) as? CGFloat == chip.padding, "room before the chip")
+        #expect(text.string.attribute(.kern, at: 6, effectiveRange: nil) as? CGFloat == chip.padding, "room after it")
+        #expect(text.string.attribute(.kern, at: 5, effectiveRange: nil) == nil)
+    }
+
+    @Test func aChipCoversItsCodeAndStaysClearOfTheTextAroundIt() throws {
+        let fragment = try #require(layOut(build("Use `W_q` here").string) as? InlineCodeFragment)
+        let line = try #require(fragment.textLineFragments.first)
+        let chip = try #require(fragment.chips().first)
+        let x = { (index: Int) in line.typographicBounds.minX + line.locationForCharacter(at: index).x }
+        #expect(chip.rect.minX == x(4) - chip.style.padding, "starts its padding before W")
+        #expect(chip.rect.minX > x(3), "after the space before it, which the builder widened")
+        #expect(chip.rect.maxX == x(7), "ends where the space after it starts")
+        #expect(chip.rect.minY >= line.typographicBounds.minY - 2 && chip.rect.maxY <= line.typographicBounds.maxY + 2)
+        #expect(fragment.chips().count == 1)
+        #expect(!(layOut(build("No code here").string) is InlineCodeFragment))
+    }
+
+    @Test func codeAtALinesStartKeepsItsChipInsideTheText() throws {
+        let fragment = try #require(layOut(build("`start` of a line").string) as? InlineCodeFragment)
+        let chip = try #require(fragment.chips().first)
+        #expect(chip.rect.minX == 0)
+        #expect(build("`start` of a line").string.attribute(.kern, at: 0, effectiveRange: nil) == nil, "nothing before it to kern")
+    }
+
+    @Test func linksAreUnderlinedInTheLinkColour() {
+        let text = build("See [the paper](https://arxiv.org/abs/2106.09685).")
+        #expect(color(text, at: 4) == style.link)
+        #expect(text.string.attribute(.underlineStyle, at: 4, effectiveRange: nil) as? Int == NSUnderlineStyle.single.rawValue)
+        #expect(text.string.attribute(.underlineColor, at: 4, effectiveRange: nil) as? NSColor == style.linkUnderline)
+        #expect(text.string.attribute(.underlineStyle, at: 0, effectiveRange: nil) == nil)
     }
 
     @Test func linksCarryTheirURL() {
@@ -159,6 +194,24 @@ struct ProseBuilderTests {
 
     private func color(_ text: RichText, at index: Int) -> NSColor? {
         text.string.attribute(.foregroundColor, at: index, effectiveRange: nil) as? NSColor
+    }
+
+    /// The first paragraph's layout fragment, laid out by TextKit 2 as an answer's text view lays it out.
+    private func layOut(_ text: NSAttributedString) -> NSTextLayoutFragment? {
+        let content = NSTextContentStorage()
+        let layout = NSTextLayoutManager()
+        layout.delegate = InlineCodeLayout.shared
+        content.addTextLayoutManager(layout)
+        let container = NSTextContainer(size: CGSize(width: 320, height: 0))
+        container.lineFragmentPadding = 0
+        layout.textContainer = container
+        content.textStorage?.setAttributedString(text)
+        var first: NSTextLayoutFragment?
+        layout.enumerateTextLayoutFragments(from: layout.documentRange.location, options: [.ensuresLayout]) { fragment in
+            first = fragment
+            return false
+        }
+        return first
     }
 
     private func paragraph(_ text: RichText, line: Int) -> NSParagraphStyle? {
