@@ -75,6 +75,26 @@ struct ProseBuilderTests {
         #expect(build("`start` of a line").string.attribute(.kern, at: 0, effectiveRange: nil) == nil, "nothing before it to kern")
     }
 
+    @Test(arguments: [("שלום `abc` עולם", "abc", 320.0), ("Use `אבג` here", "אבג", 320.0), ("שלום עולם `abc xyz` עוד", "abc xyz", 100.0)])
+    func aChipCoversEveryCodeCharacterWhereTheDirectionChanges(_ markdown: String, code: String, width: Double) throws {
+        let text = build(markdown).string
+        let fragment = try #require(layOut(text, width: width) as? InlineCodeFragment)
+        let layout = try #require(fragment.textLayoutManager)
+        let chips = fragment.chips().map(\.rect)
+        let code = (text.string as NSString).range(of: code)
+        for index in code.location..<code.upperBound where (text.string as NSString).character(at: index) != 0x20 {
+            let range = try #require(NSTextRange(NSRange(location: index, length: 1), in: layout.textContentManager!))
+            var center: CGPoint?
+            layout.enumerateTextSegments(in: range, type: .standard, options: []) { _, segment, _, _ in
+                center = CGPoint(x: segment.midX - fragment.layoutFragmentFrame.minX, y: segment.midY - fragment.layoutFragmentFrame.minY)
+                return false
+            }
+            let point = try #require(center)
+            #expect(chips.contains { $0.contains(point) }, "character \(index) of \(markdown.debugDescription) is on no chip: \(chips)")
+        }
+        #expect(chips.allSatisfy { $0.width > 4 }, "no chip is just its padding: \(chips)")
+    }
+
     @Test func linksAreUnderlinedInTheLinkColour() {
         let text = build("See [the paper](https://arxiv.org/abs/2106.09685).")
         #expect(color(text, at: 4) == style.link)
@@ -197,12 +217,12 @@ struct ProseBuilderTests {
     }
 
     /// The first paragraph's layout fragment, laid out by TextKit 2 as an answer's text view lays it out.
-    private func layOut(_ text: NSAttributedString) -> NSTextLayoutFragment? {
+    private func layOut(_ text: NSAttributedString, width: CGFloat = 320) -> NSTextLayoutFragment? {
         let content = NSTextContentStorage()
         let layout = NSTextLayoutManager()
         layout.delegate = InlineCodeLayout.shared
         content.addTextLayoutManager(layout)
-        let container = NSTextContainer(size: CGSize(width: 320, height: 0))
+        let container = NSTextContainer(size: CGSize(width: width, height: 0))
         container.lineFragmentPadding = 0
         layout.textContainer = container
         content.textStorage?.setAttributedString(text)

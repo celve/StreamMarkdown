@@ -47,29 +47,47 @@ final class InlineCodeFragment: NSTextLayoutFragment, @unchecked Sendable {
         super.draw(at: point, in: context)
     }
 
-    /// Each chip's box in the fragment's coordinates: from `padding` before the code's first character, but not past
-    /// the line's start, to after its last, whose kerning gives the room after; as tall as the code's font, a point over.
+    /// Each chip's box in the fragment's coordinates, one per piece of the code TextKit lays out on a line, so a run whose
+    /// direction differs from the paragraph's is covered where it lands; as tall as the code's font, a point over. The
+    /// piece beside the character before the code reaches `padding` towards it, into the room its kerning made.
     func chips() -> [Chip] {
-        guard let paragraph = textElement as? NSTextParagraph else { return [] }
+        guard let paragraph = textElement as? NSTextParagraph, let layout = textLayoutManager, let content = layout.textContentManager,
+              let element = paragraph.elementRange else { return [] }
         let text = paragraph.attributedString
+        let base = content.offset(from: content.documentRange.location, to: element.location)
+        let origin = layoutFragmentFrame.origin
+        func segments(_ range: NSRange) -> [(frame: CGRect, baseline: CGFloat)] {
+            guard let textRange = NSTextRange(NSRange(location: base + range.location, length: range.length), in: content) else { return [] }
+            var found: [(CGRect, CGFloat)] = []
+            layout.enumerateTextSegments(in: textRange, type: .standard, options: []) { _, frame, baseline, _ in
+                if frame.width > 0 { found.append((frame.offsetBy(dx: -origin.x, dy: -origin.y), baseline)) }
+                return true
+            }
+            return found
+        }
         var chips: [Chip] = []
         text.enumerateAttribute(.streamMarkdownInlineCode, in: NSRange(location: 0, length: text.length)) { value, range, _ in
             guard let style = value as? InlineCodeChip, let font = text.attribute(.font, at: range.location, effectiveRange: nil) as? PlatformFont else { return }
-            for line in textLineFragments {
-                let part = NSIntersectionRange(line.characterRange, range)
-                guard part.length > 0 else { continue }
-                let start = line.locationForCharacter(at: part.location).x
-                let end = line.locationForCharacter(at: part.upperBound).x
-                var minX = min(start, end), maxX = max(start, end)
-                if part.location == range.location {
-                    if start <= end { minX = max(minX - style.padding, 0) } else { maxX += style.padding }
+            let before = range.location > 0 ? segments((text.string as NSString).rangeOfComposedCharacterSequence(at: range.location - 1)).first : nil
+            for (frame, baseline) in segments(range) {
+                var (minX, maxX) = (frame.minX, frame.maxX)
+                if let before, abs(before.frame.midY - frame.midY) < frame.height / 2 {
+                    if before.frame.midX < frame.midX { minX -= style.padding } else { maxX += style.padding }
                 }
-                let baseline = line.glyphOrigin.y
-                let rect = CGRect(x: minX, y: baseline - font.ascender - 1, width: maxX - minX, height: font.ascender - font.descender + 2)
-                chips.append(Chip(rect: rect.offsetBy(dx: line.typographicBounds.minX, dy: line.typographicBounds.minY), style: style))
+                let top = frame.minY + baseline - font.ascender - 1
+                chips.append(Chip(rect: CGRect(x: minX, y: top, width: maxX - minX, height: font.ascender - font.descender + 2), style: style))
             }
         }
         return chips
+    }
+}
+
+extension NSTextRange {
+    /// A range of UTF-16 offsets in a content manager's document.
+    convenience init?(_ range: NSRange, in content: NSTextContentManager) {
+        guard let start = content.location(content.documentRange.location, offsetBy: range.location),
+              let end = content.location(start, offsetBy: range.length) else { return nil }
+        self.init(location: start, end: end)
     }
 }
 

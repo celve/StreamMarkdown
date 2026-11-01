@@ -371,17 +371,6 @@ extension NSAttributedString {
 }
 #endif
 
-#if canImport(UIKit)
-extension NSTextRange {
-    /// A range of UTF-16 offsets in a content manager's document.
-    convenience init?(_ range: NSRange, in content: NSTextContentManager) {
-        guard let start = content.location(content.documentRange.location, offsetBy: range.location),
-              let end = content.location(start, offsetBy: range.length) else { return nil }
-        self.init(location: start, end: end)
-    }
-}
-#endif
-
 #if DEBUG && canImport(UIKit)
 extension ProseUITextView {
     /// Characters of the shown text that the fade mask leaves hidden: neither under the settled part nor under a
