@@ -26,7 +26,7 @@ Known limits:
 Add the package and depend on its `StreamMarkdown` product. Releases are tagged on `main`, and before 1.0 a minor version may change the API, so pin one exactly:
 
 ```swift
-.package(url: "https://github.com/celve/StreamMarkdown", exact: "0.1.0"),
+.package(url: "https://github.com/celve/StreamMarkdown", exact: "0.1.1"),
 ```
 
 ## Use
