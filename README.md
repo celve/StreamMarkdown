@@ -26,7 +26,7 @@ Known limits:
 Add the package and depend on its `StreamMarkdown` product. Releases are tagged on `main`, and before 1.0 a minor version may change the API, so pin one exactly:
 
 ```swift
-.package(url: "https://github.com/celve/StreamMarkdown", exact: "0.1.0"),
+.package(url: "https://github.com/celve/StreamMarkdown", exact: "0.1.1"),
 ```
 
 ## Use
@@ -41,7 +41,7 @@ StreamMarkdownView(answer, isStreaming: isResponding)
 
 Pass the whole answer so far each time it grows, and set `isStreaming` to false when it ends: the rest then shows at once and is parsed as written. The view needs iOS 27.1; the parser and builder also build on macOS 27, where the tests run. Its reveal asks for up to 120 Hz, which an iPhone grants only to an app whose Info.plist sets `CADisableMinimumFrameDurationOnPhone`.
 
-`StreamMarkdownStyle` holds the tokens: fonts by role as Dynamic Type text styles (a serif body and SF headings by default, as in Duoxiv's reader), spacing in ems of the body font, and colours.
+`StreamMarkdownStyle` holds the tokens: fonts by role as Dynamic Type text styles, spacing and corner radii in ems of the body font, and colours. The defaults follow Claude's answers: a serif body and serif semibold headings, a line height near 1.5, inline code on a rounded chip in Claude's red, code blocks a little lighter than the page with a hairline border, quotes beside a faint bar, tables with hairline rules and no frame, and links underlined in the text colour. Colours are built from the system's label colour, so they sit on any background and follow Increase Contrast; the page colour is the host's.
 
 ## How it works
 
@@ -54,7 +54,7 @@ Pass the whole answer so far each time it grows, and set `isStreaming` to false 
 - `Render/BlockContent.swift` is the seam for later pieces: `BlockRenderer` turns a parsed block into a `BlockContent` (prose text, a quote of child blocks, a rule, a code block, a table, a list cut around the code blocks and tables in its items, display math, or monospaced source for HTML), and each case has a view in `BlockContentView`. A field a renderer starts reading goes into `RenderInputs` too, or a block that changes only there is not redrawn; a formula is written there as its source, never its placeholder. `RenderContext` says whether a block is the open tail of a streaming answer; a code block's highlighted-or-plain decision depends on it and is written into `RenderInputs`.
 - `Render/CodeHighlighter.swift` is a table-driven lexer of our own (keywords, strings, comments, numbers, types, calls, decorators, variables; line modes for diffs and markup) for about 30 languages and their aliases. A language it does not know stays plain. Highlightr (highlight.js in JavaScriptCore) was measured against it: 180–233 ms to start, 17.5 MB, and 3.6 ms for a 15-line block on the build Mac.
 - `Render/CodeBuilder.swift` and `Render/TableBuilder.swift` build a code block's text and a table's cells inside the parse job. A streaming table keeps the text of every cell whose inputs are unchanged, so only changed cells' text views update.
-- `Render/ProseBuilder.swift` is a `MarkupWalker` that builds a paragraph, heading or whole list into one `NSAttributedString`, with list markers right-aligned on a tab before the text. It runs inside the parse job, off the main thread.
+- `Render/ProseBuilder.swift` is a `MarkupWalker` that builds a paragraph, heading or whole list into one `NSAttributedString`, with list markers right-aligned on a tab before the text. It runs inside the parse job, off the main thread. Inline code carries an `InlineCodeChip`, and the characters around it are kerned to leave the chip room; `Render/InlineCodeFragment.swift` gives TextKit a layout fragment that draws the chips under the text, only for paragraphs that hold inline code. Table cells are labels, which draw a plain fill instead.
 - `Views/ProseTextView.swift` draws a block in a non-scrolling TextKit 2 `UITextView`, sized with `sizeThatFits`, with links sent to SwiftUI's `openURL`. A new string that begins as the shown one did replaces only what follows their common start in the text storage. New characters fade in under a layer mask whose part over each new range Core Animation ramps from transparent, so a fade runs no frames on the main thread; UITextView does not redraw text when TextKit 2 rendering attributes change, and redrawing it by hand every frame cost about 50 ms/s of main thread on the 10k stream. `Views/CodeBlockView.swift` puts a code block's text view in a horizontal `ScrollView` under its header; `Views/TableBlockView.swift` draws a table's grid as one UIKit view of cell labels, in a horizontal `ScrollView`, so a layout pass over the answer asks each table for one cached size; labels because a text view per cell cost the stream about 25 ms/s of main thread, so cell text is not selectable, and a tap on a cell link goes to `openURL`.
 
 ## Demo and measurement

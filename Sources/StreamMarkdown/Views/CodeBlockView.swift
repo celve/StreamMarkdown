@@ -7,6 +7,7 @@ struct CodeBlockView: View {
     let code: CodeContent
     @Environment(\.streamMarkdownStyle) private var style
     @Environment(\.streamMarkdownEm) private var em
+    @Environment(\.displayScale) private var displayScale
     @State private var copied = false
 
     var body: some View {
@@ -40,12 +41,21 @@ struct CodeBlockView: View {
             .scrollBounceBehavior(.basedOnSize, axes: .horizontal)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(style.sourceBackground, in: .rect(cornerRadius: em * 0.6))
+        .sourceBox(style: style, em: em, displayScale: displayScale)
         .task(id: copied) {
             guard copied else { return }
             try? await Task.sleep(for: .seconds(1.5))
             copied = false
         }
+    }
+}
+
+extension View {
+    /// The rounded fill and hairline that code blocks and HTML sit in.
+    func sourceBox(style: StreamMarkdownStyle, em: CGFloat, displayScale: CGFloat) -> some View {
+        let shape = RoundedRectangle(cornerRadius: style.sourceCornerRadius * em)
+        return background(style.sourceBackground, in: shape)
+            .overlay { shape.strokeBorder(style.sourceBorderColor, lineWidth: 1 / max(displayScale, 1)) }
     }
 }
 #endif

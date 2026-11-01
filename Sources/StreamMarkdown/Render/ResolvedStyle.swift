@@ -58,8 +58,12 @@ final class ResolvedStyle: @unchecked Sendable {
     let text: PlatformColor
     let secondaryText: PlatformColor
     let link: PlatformColor
+    let linkUnderline: PlatformColor?
+    /// Inline code's text, when it differs from the text around it.
+    let inlineCodeText: PlatformColor?
     let inlineCodeBackground: PlatformColor
     let quoteText: PlatformColor
+    private let inlineCodeBorder: PlatformColor
     private let codeColors: [CodeTokenKind: PlatformColor]
 
     init(_ environment: RenderEnvironment) {
@@ -74,7 +78,10 @@ final class ResolvedStyle: @unchecked Sendable {
         text = PlatformColor(style.textColor)
         secondaryText = PlatformColor(style.secondaryTextColor)
         link = PlatformColor(style.linkColor)
+        linkUnderline = style.linkUnderlineColor.map { PlatformColor($0) }
+        inlineCodeText = style.inlineCodeColor.map { PlatformColor($0) }
         inlineCodeBackground = PlatformColor(style.inlineCodeBackground)
+        inlineCodeBorder = PlatformColor(style.inlineCodeBorderColor)
         quoteText = PlatformColor(style.quoteTextColor)
         let colors = style.codeColors
         codeColors = Dictionary(uniqueKeysWithValues: CodeTokenKind.allCases.map { kind in
@@ -101,6 +108,12 @@ final class ResolvedStyle: @unchecked Sendable {
     func heading(_ level: Int) -> FontSpec { headings[min(max(level, 1), 6) - 1] }
 
     func codeColor(_ kind: CodeTokenKind) -> PlatformColor { codeColors[kind] ?? text }
+
+    /// Inline code's chip in text of `size`.
+    func inlineCodeChip(size: CGFloat) -> InlineCodeChip {
+        InlineCodeChip(fill: inlineCodeBackground, border: inlineCodeBorder, cornerRadius: (size * style.inlineCodeCornerRadius).rounded(),
+                       padding: (size * 0.25).rounded())
+    }
 
     private static func spec(_ token: StreamMarkdownStyle.FontToken, _ size: DynamicTypeSize) -> FontSpec {
         FontSpec(size: (pointSize(token.textStyle, size) * token.scale).rounded(toPlaces: 1), design: token.design, weight: token.weight.platform)

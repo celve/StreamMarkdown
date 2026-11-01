@@ -24,10 +24,10 @@ struct ProseTextView: UIViewRepresentable {
         let coordinator = context.coordinator
         coordinator.openURL = context.environment.openURL
         coordinator.selection = selection
-        let linkColor = UIColor(style.linkColor)
-        if coordinator.linkColor != linkColor {
-            coordinator.linkColor = linkColor
-            view.linkTextAttributes = [.foregroundColor: linkColor]
+        let linkAttributes = Self.linkAttributes(style)
+        if coordinator.linkAttributes != linkAttributes {
+            coordinator.linkAttributes = linkAttributes
+            view.linkTextAttributes = linkAttributes.dictionary
         }
         guard coordinator.shown !== text else { return }
         let previous = coordinator.shown
@@ -45,6 +45,20 @@ struct ProseTextView: UIViewRepresentable {
         StreamMarkdownDiagnostics.textViewUpdates += 1
     }
 
+    struct LinkAttributes: Equatable {
+        var color: UIColor
+        var underline: UIColor?
+
+        var dictionary: [NSAttributedString.Key: Any] {
+            guard let underline else { return [.foregroundColor: color] }
+            return [.foregroundColor: color, .underlineStyle: NSUnderlineStyle.single.rawValue, .underlineColor: underline]
+        }
+    }
+
+    static func linkAttributes(_ style: StreamMarkdownStyle) -> LinkAttributes {
+        LinkAttributes(color: UIColor(style.linkColor), underline: style.linkUnderlineColor.map { UIColor($0) })
+    }
+
     func sizeThatFits(_ proposal: ProposedViewSize, uiView: ProseUITextView, context: Context) -> CGSize? {
         let width = proposal.width ?? .greatestFiniteMagnitude
         if let size = context.coordinator.sizes[width] { return size }
@@ -59,7 +73,7 @@ struct ProseTextView: UIViewRepresentable {
     final class Coordinator: TextViewActions {
         var shown: RichText?
         var sizes: [CGFloat: CGSize] = [:]
-        var linkColor: UIColor?
+        var linkAttributes: LinkAttributes?
         var baseTraits: UIAccessibilityTraits = []
     }
 }
@@ -78,6 +92,7 @@ extension UITextView {
         view.adjustsFontForContentSizeCategory = false
         view.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         view.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        view.textLayoutManager?.delegate = InlineCodeLayout.shared
         view.delegate = delegate
         StreamMarkdownDiagnostics.textViews += 1
         StreamMarkdownDiagnostics.liveTextViews.add(view)
@@ -352,17 +367,6 @@ extension NSAttributedString {
         guard glyph < layout.numberOfGlyphs,
               layout.boundingRect(forGlyphRange: NSRange(location: glyph, length: 1), in: container).insetBy(dx: -6, dy: -6).contains(point) else { return nil }
         return attribute(.link, at: layout.characterIndexForGlyph(at: glyph), effectiveRange: nil) as? URL
-    }
-}
-#endif
-
-#if canImport(UIKit)
-extension NSTextRange {
-    /// A range of UTF-16 offsets in a content manager's document.
-    convenience init?(_ range: NSRange, in content: NSTextContentManager) {
-        guard let start = content.location(content.documentRange.location, offsetBy: range.location),
-              let end = content.location(start, offsetBy: range.length) else { return nil }
-        self.init(location: start, end: end)
     }
 }
 #endif

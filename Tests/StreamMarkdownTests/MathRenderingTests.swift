@@ -34,7 +34,7 @@ struct MathRenderingTests {
         #expect(text.string == "See $\\unknowncommand{x}$ here.")
         let font = try #require(text.attribute(.font, at: 4, effectiveRange: nil) as? NSFont)
         #expect(font.fontDescriptor.symbolicTraits.contains(.monoSpace))
-        #expect(text.attribute(.backgroundColor, at: 4, effectiveRange: nil) as? NSColor == style.inlineCodeBackground)
+        #expect(text.attribute(.streamMarkdownInlineCode, at: 4, effectiveRange: nil) is InlineCodeChip)
     }
 
     @Test(arguments: [

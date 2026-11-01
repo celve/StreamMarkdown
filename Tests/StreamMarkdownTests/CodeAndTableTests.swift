@@ -151,6 +151,9 @@ struct CodeAndTableTests {
         #expect(plain.pointSize == style.table.size)
         #expect(try #require(font(body[0].text.string, at: 0)).fontDescriptor.symbolicTraits.contains(.bold))
         #expect(try #require(font(body[2].text.string, at: 0)).fontDescriptor.symbolicTraits.contains(.monoSpace))
+        #expect(body[2].text.string.attribute(.backgroundColor, at: 0, effectiveRange: nil) as? NSColor == style.inlineCodeBackground,
+                "a cell's label draws inline code on a plain fill")
+        #expect(body[2].text.string.attribute(.streamMarkdownInlineCode, at: 0, effectiveRange: nil) == nil)
         #expect(body[3].text.string.attribute(.link, at: 0, effectiveRange: nil) as? URL == URL(string: "https://arxiv.org/abs/2106.09685"))
     }
 
