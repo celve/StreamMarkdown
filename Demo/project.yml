@@ -16,7 +16,7 @@ targets:
   StreamMarkdownDemo:
     type: application
     platform: iOS
-    deploymentTarget: "27.1"
+    deploymentTarget: "27.0"
     sources:
       - path: Sources
       - path: Answers
@@ -33,7 +33,7 @@ targets:
   StreamMarkdownDemoUITests:
     type: bundle.ui-testing
     platform: iOS
-    deploymentTarget: "27.1"
+    deploymentTarget: "27.0"
     sources: [UITests]
     dependencies:
       - target: StreamMarkdownDemo
