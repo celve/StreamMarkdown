@@ -4,7 +4,7 @@ import PackageDescription
 let package = Package(
     name: "StreamMarkdown",
     // macOS so `swift test` runs on the build Mac; the views are UIKit and build for iOS only.
-    platforms: [.iOS("27.1"), .macOS("27.0")],
+    platforms: [.iOS("27.0"), .macOS("27.0")],
     products: [
         .library(name: "StreamMarkdown", targets: ["StreamMarkdown"]),
     ],

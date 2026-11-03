@@ -39,7 +39,7 @@ StreamMarkdownView(answer, isStreaming: isResponding)
     .environment(\.openURL, OpenURLAction { url in … })
 ```
 
-Pass the whole answer so far each time it grows, and set `isStreaming` to false when it ends: the rest then shows at once and is parsed as written. The view needs iOS 27.1; the parser and builder also build on macOS 27, where the tests run. Its reveal asks for up to 120 Hz, which an iPhone grants only to an app whose Info.plist sets `CADisableMinimumFrameDurationOnPhone`.
+Pass the whole answer so far each time it grows, and set `isStreaming` to false when it ends: the rest then shows at once and is parsed as written. The view needs iOS 27.0; the parser and builder also build on macOS 27, where the tests run. Its reveal asks for up to 120 Hz, which an iPhone grants only to an app whose Info.plist sets `CADisableMinimumFrameDurationOnPhone`.
 
 `StreamMarkdownStyle` holds the tokens: fonts by role as Dynamic Type text styles, spacing and corner radii in ems of the body font, and colours. The defaults follow Claude's answers: a serif body and serif semibold headings, a line height near 1.5, inline code on a rounded chip in Claude's red, code blocks a little lighter than the page with a hairline border, quotes beside a faint bar, tables with hairline rules and no frame, and links underlined in the text colour. Colours are built from the system's label colour, so they sit on any background and follow Increase Contrast; the page colour is the host's.
 
